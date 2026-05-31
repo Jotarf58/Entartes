@@ -1,0 +1,1467 @@
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  Calendar,
+  CheckCircle2,
+  Image as ImageIcon,
+  Search,
+  ShieldCheck,
+  ShoppingBag,
+  SlidersHorizontal,
+  Tag,
+  Upload,
+  X,
+} from 'lucide-react';
+
+import {
+  figurinosAcessoriosMock,
+  modalidades,
+  type TipoFigurinoAcessorio,
+} from '../data/mockEntartes';
+
+import {
+  aceitarRequisicaoInventario,
+  criarItemInventario,
+  editarItemInventario,
+  encerrarItemInventario,
+  listarInventario,
+  rejeitarRequisicaoInventario,
+  requisitarItemInventario,
+  type MarketplaceItemApp,
+  type OrigemInventarioBackend,
+  type RequisicaoBackend,
+} from '../services/inventarioService';
+
+const META_REGEX = /\n?\[ENTARTES_META ([^\]]+)\]\s*$/;
+
+type UserRole = 'ALUNO' | 'ENCARREGADO' | 'PROFESSOR' | 'COORDENACAO';
+
+type CurrentUser = {
+  contaId?: string;
+  perfilId?: string;
+  email?: string;
+  name: string;
+  role: UserRole;
+  roleLabel: string;
+  description: string;
+  initials: string;
+};
+
+type TipoFiltro = 'TODOS' | TipoFigurinoAcessorio;
+
+type MarketplaceItem = Omit<MarketplaceItemApp, 'tipo' | 'origem'> & {
+  tipo: TipoFigurinoAcessorio;
+  origem: string;
+  origemNome: string;
+  contactoEmail: string;
+  contactoTelefone: string;
+};
+
+type FormItem = {
+  nome: string;
+  descricao: string;
+  tipo: TipoFigurinoAcessorio;
+  modalidade: string;
+  tamanho: string;
+  estadoConservacao: string;
+  origem: string;
+  dataInicioDisponibilidade: string;
+  dataFimDisponibilidade: string;
+  preco: string;
+  imagemUrl: string;
+  origemNome: string;
+  contactoEmail: string;
+  contactoTelefone: string;
+};
+
+const tipoLabels: Record<TipoFigurinoAcessorio, string> = {
+  FIGURINO: 'Figurino',
+  ACESSORIO: 'Acessório',
+  CALCADO: 'Calçado',
+  MAQUILHAGEM: 'Maquilhagem',
+  OUTRO: 'Outro',
+};
+
+const estadoAnuncioLabels: Record<string, string> = {
+  PUBLICADO: 'Publicado',
+  ATIVO: 'Ativo',
+  RESERVADO: 'Reservado',
+  CONCLUIDO: 'Concluído',
+  INATIVO: 'Inativo',
+  ENCERRADO: 'Encerrado',
+};
+
+const estadoRequisicaoLabels: Record<string, string> = {
+  PENDENTE: 'Pendente',
+  ACEITE: 'Aceite',
+  REJEITADA: 'Rejeitada',
+};
+
+function criarFormularioVazio(): FormItem {
+  return {
+    nome: '',
+    descricao: '',
+    tipo: 'FIGURINO',
+    modalidade: modalidades[0] ?? 'Ballet',
+    tamanho: '',
+    estadoConservacao: 'Bom',
+    origem: 'Família',
+    dataInicioDisponibilidade: '2026-01-01',
+    dataFimDisponibilidade: '2026-12-31',
+    preco: '10',
+    imagemUrl: '',
+    origemNome: '',
+    contactoEmail: '',
+    contactoTelefone: '',
+  };
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return 'Ocorreu um erro ao comunicar com o backend.';
+}
+
+function formatDate(date: string) {
+  if (!date) {
+    return 'sem data definida';
+  }
+
+  const parsedDate = new Date(date);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return 'sem data definida';
+  }
+
+  return new Intl.DateTimeFormat('pt-PT').format(parsedDate);
+}
+
+function normalizarTipo(value: string): TipoFigurinoAcessorio {
+  const texto = value.toUpperCase();
+
+  if (texto.includes('ACESS')) return 'ACESSORIO';
+  if (texto.includes('CAL')) return 'CALCADO';
+  if (texto.includes('MAQ')) return 'MAQUILHAGEM';
+  if (texto.includes('OUTRO')) return 'OUTRO';
+
+  return 'FIGURINO';
+}
+
+function getOrigemBackend(role: UserRole): OrigemInventarioBackend {
+  if (role === 'COORDENACAO' || role === 'PROFESSOR') {
+    return 'ESCOLA';
+  }
+
+  if (role === 'ALUNO') {
+    return 'ALUNO';
+  }
+
+  return 'ENCARREGADO';
+}
+
+function getOrigemLabel(value: string) {
+  if (value === 'ESCOLA') return 'Escola';
+  if (value === 'ALUNO') return 'Aluno';
+  if (value === 'ENCARREGADO') return 'Encarregado';
+
+  return value || 'Família';
+}
+
+function getCurrentUserId(currentUser: CurrentUser) {
+  return currentUser.perfilId ?? currentUser.contaId ?? currentUser.email ?? currentUser.name;
+}
+
+function parseMeta(descricao: string) {
+  const match = descricao.match(META_REGEX);
+
+  if (!match) {
+    return {} as Partial<FormItem>;
+  }
+
+  const meta: Partial<FormItem> = {};
+  const parts = match[1].split(';').map((part) => part.trim());
+
+  for (const part of parts) {
+    const [key, ...valueParts] = part.split('=');
+    const value = valueParts.join('=').trim();
+
+    if (!key || !value) continue;
+
+    if (key === 'tipo') meta.tipo = normalizarTipo(value);
+    if (key === 'modalidade') meta.modalidade = value;
+    if (key === 'tamanho') meta.tamanho = value;
+    if (key === 'imagemUrl') meta.imagemUrl = value;
+    if (key === 'inicio') meta.dataInicioDisponibilidade = value;
+    if (key === 'fim') meta.dataFimDisponibilidade = value;
+    if (key === 'origemNome') meta.origemNome = value;
+    if (key === 'contactoEmail') meta.contactoEmail = value;
+    if (key === 'contactoTelefone') meta.contactoTelefone = value;
+  }
+
+  return meta;
+}
+
+function limparDescricao(descricao: string) {
+  return descricao.replace(META_REGEX, '').trim();
+}
+
+function criarDescricaoBackend(formItem: FormItem) {
+  const meta = [
+    `tipo=${formItem.tipo}`,
+    `modalidade=${formItem.modalidade}`,
+    `tamanho=${formItem.tamanho}`,
+    `imagemUrl=${formItem.imagemUrl}`,
+    `inicio=${formItem.dataInicioDisponibilidade}`,
+    `fim=${formItem.dataFimDisponibilidade}`,
+    `origemNome=${formItem.origemNome}`,
+    `contactoEmail=${formItem.contactoEmail}`,
+    `contactoTelefone=${formItem.contactoTelefone}`,
+  ].join('; ');
+
+  return `${formItem.descricao.trim()}\n[ENTARTES_META ${meta}]`;
+}
+
+function normalizarItemBackend(item: MarketplaceItemApp): MarketplaceItem {
+  const meta = parseMeta(item.descricao);
+
+  return {
+    ...item,
+    descricao: limparDescricao(item.descricao),
+    tipo: meta.tipo ?? normalizarTipo(item.tipo),
+    modalidade: meta.modalidade ?? item.modalidade,
+    tamanho: meta.tamanho ?? item.tamanho,
+    imagemUrl: meta.imagemUrl ?? item.imagemUrl,
+    dataInicioDisponibilidade:
+      meta.dataInicioDisponibilidade ?? item.dataInicioDisponibilidade,
+    dataFimDisponibilidade: meta.dataFimDisponibilidade ?? item.dataFimDisponibilidade,
+    origem: getOrigemLabel(item.origem),
+    origemNome: meta.origemNome ?? '',
+    contactoEmail: meta.contactoEmail ?? '',
+    contactoTelefone: meta.contactoTelefone ?? '',
+  };
+}
+
+function criarItensMock(): MarketplaceItem[] {
+  return figurinosAcessoriosMock.map((item) => ({
+    ...item,
+    imagemUrl: item.imagemUrl ?? '',
+    estadoAnuncio: 'ATIVO',
+    utilizadorId: 'mock',
+    origemNome: item.origem ?? 'Família Ent’artes',
+    contactoEmail: 'geral@entartes.pt',
+    contactoTelefone: '910 000 000',
+    requisicoes: [],
+  })) as MarketplaceItem[];
+}
+
+function getSubtitle(role: UserRole) {
+  if (role === 'ALUNO') {
+    return 'Consulta figurinos, acessórios e materiais disponíveis para eventos.';
+  }
+
+  if (role === 'ENCARREGADO') {
+    return 'Consulta, solicita e publica figurinos/acessórios associados ao educando.';
+  }
+
+  if (role === 'PROFESSOR') {
+    return 'Consulta materiais disponíveis e publica figurinos/acessórios associados às aulas ou eventos.';
+  }
+
+  return 'Gestão global de figurinos, acessórios, calçado, maquilhagem e materiais da escola.';
+}
+
+function getRequisicaoId(requisicao: RequisicaoBackend) {
+  return requisicao._id ?? requisicao.id ?? '';
+}
+
+
+function isMongoObjectId(value: string) {
+  return /^[a-f\d]{24}$/i.test(value.trim());
+}
+
+function getOrigemComNome(
+  item: MarketplaceItem,
+  currentUser?: CurrentUser,
+  currentUserIds: string[] = []
+) {
+  const nome = item.origemNome?.trim();
+  const itemDoUtilizadorAtual = currentUserIds.filter(Boolean).includes(item.utilizadorId);
+
+  if (itemDoUtilizadorAtual && currentUser?.name) {
+    return `${item.origem} — ${currentUser.name}`;
+  }
+
+  if (nome && !isMongoObjectId(nome)) {
+    return `${item.origem} — ${nome}`;
+  }
+
+  if (item.origem === 'ESCOLA') {
+    return 'Escola — Ent’Artes';
+  }
+
+  if (item.origem === 'ENCARREGADO') {
+    return 'Encarregado responsável';
+  }
+
+  if (item.origem === 'ALUNO') {
+    return 'Aluno responsável';
+  }
+
+  return item.origem || 'Responsável não identificado';
+}
+
+function getContactoItem(item: MarketplaceItem) {
+  const contactos = [item.contactoEmail, item.contactoTelefone]
+    .map((contacto) => contacto?.trim())
+    .filter(Boolean);
+
+  return contactos.length > 0 ? contactos.join(' · ') : 'Contacto não indicado';
+}
+
+function getPeriodoAluguer(item: MarketplaceItem) {
+  return `${formatDate(item.dataInicioDisponibilidade)} a ${formatDate(
+    item.dataFimDisponibilidade
+  )}`;
+}
+
+function getTaxaAluguer(item: MarketplaceItem) {
+  return `${item.preco}€ / período de aluguer`;
+}
+
+function anuncioEstaDisponivel(item: MarketplaceItem) {
+  return item.estadoAnuncio === 'ATIVO' || item.estadoAnuncio === 'PUBLICADO';
+}
+
+export default function Marketplace({ currentUser }: { currentUser: CurrentUser }) {
+  const isAluno = currentUser.role === 'ALUNO';
+  const isEncarregado = currentUser.role === 'ENCARREGADO';
+  const isProfessor = currentUser.role === 'PROFESSOR';
+  const isCoordenacao = currentUser.role === 'COORDENACAO';
+
+  const podePublicar = isEncarregado || isProfessor || isCoordenacao;
+  const currentUserId = getCurrentUserId(currentUser);
+  const currentUserIds = useMemo(
+    () =>
+      [
+        currentUser.perfilId,
+        currentUser.contaId,
+        currentUser.email,
+        currentUser.name,
+        currentUserId,
+      ].filter(Boolean) as string[],
+    [
+      currentUser.perfilId,
+      currentUser.contaId,
+      currentUser.email,
+      currentUser.name,
+      currentUserId,
+    ]
+  );
+  const mostraMeusAnuncios = isEncarregado || isProfessor || isCoordenacao;
+
+  const [itens, setItens] = useState<MarketplaceItem[]>(criarItensMock);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const [pesquisa, setPesquisa] = useState('');
+  const [tipoFiltro, setTipoFiltro] = useState<TipoFiltro>('TODOS');
+  const [modalidadeFiltro, setModalidadeFiltro] = useState('TODAS');
+
+  const [modalAberta, setModalAberta] = useState(false);
+  const [modoEdicao, setModoEdicao] = useState(false);
+  const [itemEditandoId, setItemEditandoId] = useState<string | null>(null);
+  const [formItem, setFormItem] = useState<FormItem>(criarFormularioVazio());
+
+  const [detalheItem, setDetalheItem] = useState<MarketplaceItem | null>(null);
+  const [pedidosAluguer, setPedidosAluguer] = useState<string[]>([]);
+  const [mensagemSucesso, setMensagemSucesso] = useState('');
+
+  useEffect(() => {
+    async function carregarInventario() {
+      try {
+        setIsLoading(true);
+        setMensagemSucesso('');
+
+        const itensBackend = await listarInventario();
+
+        if (itensBackend.length > 0) {
+          setItens(itensBackend.map(normalizarItemBackend));
+        } else {
+          setItens(criarItensMock());
+        }
+      } catch (error) {
+        setItens(criarItensMock());
+        setMensagemSucesso(
+          `Não foi possível carregar o inventário do backend. A mostrar dados mock. ${getErrorMessage(
+            error
+          )}`
+        );
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    void carregarInventario();
+  }, []);
+
+  const itensFiltrados = useMemo(() => {
+    return itens.filter((item) => {
+      const pesquisaNormalizada = pesquisa.trim().toLowerCase();
+
+      const correspondePesquisa =
+        !pesquisaNormalizada ||
+        item.nome.toLowerCase().includes(pesquisaNormalizada) ||
+        item.descricao.toLowerCase().includes(pesquisaNormalizada) ||
+        item.modalidade.toLowerCase().includes(pesquisaNormalizada) ||
+        item.origemNome.toLowerCase().includes(pesquisaNormalizada) ||
+        item.contactoEmail.toLowerCase().includes(pesquisaNormalizada) ||
+        item.contactoTelefone.toLowerCase().includes(pesquisaNormalizada);
+
+      const correspondeTipo = tipoFiltro === 'TODOS' || item.tipo === tipoFiltro;
+
+      const correspondeModalidade =
+        modalidadeFiltro === 'TODAS' || item.modalidade === modalidadeFiltro;
+
+      return correspondePesquisa && correspondeTipo && correspondeModalidade;
+    });
+  }, [itens, pesquisa, tipoFiltro, modalidadeFiltro]);
+
+  const meusAnuncios = useMemo(() => {
+    return itens.filter((item) => {
+      const donoPorId = currentUserIds.includes(item.utilizadorId);
+      const donoPorNome = item.origemNome === currentUser.name;
+      const donoPorEmail = Boolean(currentUser.email) && item.contactoEmail === currentUser.email;
+
+      return donoPorId || donoPorNome || donoPorEmail;
+    });
+  }, [itens, currentUserIds, currentUser.name, currentUser.email]);
+
+  const totalFigurinos = itens.filter((item) => item.tipo === 'FIGURINO').length;
+  const totalAcessorios = itens.filter((item) => item.tipo === 'ACESSORIO').length;
+
+  const precoMedio =
+    itens.length > 0
+      ? Math.round(itens.reduce((total, item) => total + item.preco, 0) / itens.length)
+      : 0;
+
+  function atualizarItemNaLista(itemAtualizado: MarketplaceItem) {
+    setItens((atuais) =>
+      atuais.map((item) => (item.id === itemAtualizado.id ? itemAtualizado : item))
+    );
+
+    setDetalheItem((atual) =>
+      atual?.id === itemAtualizado.id ? itemAtualizado : atual
+    );
+  }
+
+  function abrirModalPublicar() {
+    setModoEdicao(false);
+    setItemEditandoId(null);
+    setFormItem({
+      ...criarFormularioVazio(),
+      origemNome: currentUser.name,
+      contactoEmail: currentUser.email ?? '',
+    });
+    setModalAberta(true);
+    setMensagemSucesso('');
+  }
+
+  function abrirModalEditar(item: MarketplaceItem) {
+    setModoEdicao(true);
+    setItemEditandoId(item.id);
+    setFormItem({
+      nome: item.nome,
+      descricao: item.descricao,
+      tipo: item.tipo,
+      modalidade: item.modalidade,
+      tamanho: item.tamanho,
+      estadoConservacao: item.estadoConservacao,
+      origem: item.origem,
+      dataInicioDisponibilidade: item.dataInicioDisponibilidade || '2026-01-01',
+      dataFimDisponibilidade: item.dataFimDisponibilidade || '2026-12-31',
+      preco: String(item.preco),
+      imagemUrl: item.imagemUrl,
+      origemNome: item.origemNome,
+      contactoEmail: item.contactoEmail,
+      contactoTelefone: item.contactoTelefone,
+    });
+    setModalAberta(true);
+    setMensagemSucesso('');
+  }
+
+  function fecharModal() {
+    setModalAberta(false);
+    setModoEdicao(false);
+    setItemEditandoId(null);
+  }
+
+  async function guardarItem() {
+    if (!formItem.nome.trim() || !formItem.descricao.trim() || !formItem.tamanho.trim()) {
+      setMensagemSucesso('Preenche pelo menos o nome, descrição e tamanho.');
+      return;
+    }
+
+    const precoNumerico = Number(formItem.preco);
+
+    if (Number.isNaN(precoNumerico) || precoNumerico < 0) {
+      setMensagemSucesso('A taxa tem de ser um número válido.');
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+      setMensagemSucesso('');
+
+      if (modoEdicao && itemEditandoId) {
+        const itemOriginal = itens.find((item) => item.id === itemEditandoId);
+
+        const itemAtualizado = await editarItemInventario(itemEditandoId, {
+          titulo: formItem.nome,
+          descricao: criarDescricaoBackend(formItem),
+          estadoConservacao: formItem.estadoConservacao,
+          tipoTransacao: 'ALUGAR',
+          preco: precoNumerico,
+          taxaSimbolica: precoNumerico,
+        });
+
+        const itemNormalizado = normalizarItemBackend(itemAtualizado);
+
+        atualizarItemNaLista({
+          ...itemOriginal,
+          ...itemNormalizado,
+          id: itemEditandoId,
+          nome: formItem.nome,
+          descricao: formItem.descricao,
+          tipo: formItem.tipo,
+          modalidade: formItem.modalidade,
+          tamanho: formItem.tamanho,
+          estadoConservacao: formItem.estadoConservacao,
+          origem: formItem.origem,
+          dataInicioDisponibilidade: formItem.dataInicioDisponibilidade,
+          dataFimDisponibilidade: formItem.dataFimDisponibilidade,
+          preco: precoNumerico,
+          imagemUrl: formItem.imagemUrl,
+          origemNome: formItem.origemNome,
+          contactoEmail: formItem.contactoEmail,
+          contactoTelefone: formItem.contactoTelefone,
+          estadoAnuncio:
+            itemNormalizado.estadoAnuncio ?? itemOriginal?.estadoAnuncio ?? 'ATIVO',
+          utilizadorId:
+            itemNormalizado.utilizadorId ?? itemOriginal?.utilizadorId ?? currentUserId,
+          requisicoes: itemNormalizado.requisicoes ?? itemOriginal?.requisicoes ?? [],
+        } as MarketplaceItem);
+
+        setMensagemSucesso('Item atualizado com sucesso.');
+        fecharModal();
+        return;
+      }
+
+      const novoItem = await criarItemInventario({
+        titulo: formItem.nome,
+        descricao: criarDescricaoBackend(formItem),
+        estadoConservacao: formItem.estadoConservacao,
+        tipoTransacao: 'ALUGAR',
+        preco: precoNumerico,
+        utilizadorId: currentUserId,
+        origem: getOrigemBackend(currentUser.role),
+      });
+
+      setItens((atuais) => [
+        {
+          ...normalizarItemBackend(novoItem),
+          origemNome: formItem.origemNome || currentUser.name,
+          contactoEmail: formItem.contactoEmail,
+          contactoTelefone: formItem.contactoTelefone,
+        },
+        ...atuais,
+      ]);
+      setMensagemSucesso('Figurino/acessório publicado com sucesso no backend.');
+      fecharModal();
+    } catch (error) {
+      setMensagemSucesso(getErrorMessage(error));
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function solicitarAluguer(item: MarketplaceItem) {
+    try {
+      setMensagemSucesso('');
+
+      const itemAtualizado = await requisitarItemInventario(item.id, {
+        utilizadorId: currentUserId,
+        mensagem: `Pedido de aluguer/requisição feito por ${currentUser.name}.`,
+      });
+
+      atualizarItemNaLista(normalizarItemBackend(itemAtualizado));
+      setPedidosAluguer((atuais) =>
+        atuais.includes(item.id) ? atuais : [...atuais, item.id]
+      );
+      setMensagemSucesso(`Pedido de aluguer enviado para "${item.nome}".`);
+    } catch (error) {
+      setMensagemSucesso(getErrorMessage(error));
+    }
+  }
+
+  async function encerrarAnuncioAtual() {
+    if (!itemEditandoId) return;
+
+    const deveEncerrar = window.confirm(
+      'Tens a certeza que queres remover/encerrar este anúncio do marketplace?'
+    );
+
+    if (!deveEncerrar) return;
+
+    try {
+      setIsSaving(true);
+      setMensagemSucesso('');
+
+      await encerrarItemInventario(itemEditandoId);
+
+      setItens((atuais) => atuais.filter((item) => item.id !== itemEditandoId));
+      setDetalheItem(null);
+
+      setMensagemSucesso('Anúncio removido do marketplace.');
+      fecharModal();
+    } catch (error) {
+      setMensagemSucesso(getErrorMessage(error));
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function aceitarRequisicao(item: MarketplaceItem, requisicao: RequisicaoBackend) {
+    const requisicaoId = getRequisicaoId(requisicao);
+
+    if (!requisicaoId) {
+      setMensagemSucesso('Não foi possível identificar a requisição.');
+      return;
+    }
+
+    try {
+      const itemAtualizado = await aceitarRequisicaoInventario(item.id, requisicaoId);
+
+      atualizarItemNaLista(normalizarItemBackend(itemAtualizado));
+      setMensagemSucesso('Requisição aceite com sucesso.');
+    } catch (error) {
+      setMensagemSucesso(getErrorMessage(error));
+    }
+  }
+
+  async function rejeitarRequisicao(item: MarketplaceItem, requisicao: RequisicaoBackend) {
+    const requisicaoId = getRequisicaoId(requisicao);
+
+    if (!requisicaoId) {
+      setMensagemSucesso('Não foi possível identificar a requisição.');
+      return;
+    }
+
+    try {
+      const itemAtualizado = await rejeitarRequisicaoInventario(item.id, requisicaoId);
+
+      atualizarItemNaLista(normalizarItemBackend(itemAtualizado));
+      setMensagemSucesso('Requisição rejeitada com sucesso.');
+    } catch (error) {
+      setMensagemSucesso(getErrorMessage(error));
+    }
+  }
+
+
+  async function alternarDisponibilidade(item: MarketplaceItem) {
+    const novoEstado = anuncioEstaDisponivel(item) ? 'INATIVO' : 'ATIVO';
+
+    try {
+      setIsSaving(true);
+      setMensagemSucesso('');
+
+      const itemAtualizado = await editarItemInventario(
+        item.id,
+        {
+          titulo: item.nome,
+          descricao: criarDescricaoBackend({
+            nome: item.nome,
+            descricao: item.descricao,
+            tipo: item.tipo,
+            modalidade: item.modalidade,
+            tamanho: item.tamanho,
+            estadoConservacao: item.estadoConservacao,
+            origem: item.origem,
+            dataInicioDisponibilidade: item.dataInicioDisponibilidade,
+            dataFimDisponibilidade: item.dataFimDisponibilidade,
+            preco: String(item.preco),
+            imagemUrl: item.imagemUrl,
+            origemNome: item.origemNome,
+            contactoEmail: item.contactoEmail,
+            contactoTelefone: item.contactoTelefone,
+          }),
+          estadoConservacao: item.estadoConservacao,
+          tipoTransacao: 'ALUGAR',
+          preco: item.preco,
+          taxaSimbolica: item.preco,
+          estadoAnuncio: novoEstado,
+        } as Parameters<typeof editarItemInventario>[1] & { estadoAnuncio: string }
+      );
+
+      atualizarItemNaLista({
+        ...normalizarItemBackend(itemAtualizado),
+        estadoAnuncio: novoEstado,
+      });
+      setMensagemSucesso(
+        novoEstado === 'ATIVO'
+          ? 'Anúncio marcado como disponível.'
+          : 'Anúncio marcado como indisponível.'
+      );
+    } catch (error) {
+      setMensagemSucesso(getErrorMessage(error));
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  function atualizarForm<K extends keyof FormItem>(campo: K, valor: FormItem[K]) {
+    setFormItem((atual) => ({
+      ...atual,
+      [campo]: valor,
+    }));
+  }
+
+  return (
+    <div className="p-8 max-w-[1500px] mx-auto">
+      <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-3 mb-3">
+            <span className="px-3 py-1 rounded-full bg-[#d4e8df] text-[#2d5f4f] text-sm">
+              {currentUser.roleLabel}
+            </span>
+
+            {isLoading && (
+              <span className="px-3 py-1 rounded-full bg-[#f0f6f3] text-[#5a7a6c] text-sm">
+                A carregar inventário...
+              </span>
+            )}
+
+            {isAluno && (
+              <span className="px-3 py-1 rounded-full bg-[#f0f6f3] text-[#5a7a6c] text-sm">
+                Apenas consulta e aluguer
+              </span>
+            )}
+
+            {isEncarregado && (
+              <span className="px-3 py-1 rounded-full bg-[#d4e8ff] text-[#2d5f4f] text-sm">
+                Pode publicar
+              </span>
+            )}
+
+            {isCoordenacao && (
+              <span className="px-3 py-1 rounded-full bg-[#fff4d4] text-[#8a6d1d] text-sm">
+                Gestão global
+              </span>
+            )}
+          </div>
+
+          <h1 className="text-[#2d5f4f] mb-2">Marketplace</h1>
+
+          <p className="text-[#7a9a8c]">{getSubtitle(currentUser.role)}</p>
+        </div>
+
+        {podePublicar && (
+          <button
+            onClick={abrirModalPublicar}
+            className="flex items-center gap-2 px-5 py-3 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] transition-colors"
+          >
+            <Upload className="w-4 h-4" />
+            Publicar figurino/acessório
+          </button>
+        )}
+      </div>
+
+      {mensagemSucesso && (
+        <div className="mb-6 rounded-xl border border-[#d4e8df] bg-[#f0f6f3] p-4 flex items-center gap-3">
+          <CheckCircle2 className="w-5 h-5 text-[#2d5f4f]" />
+          <p className="text-[#2d5f4f]">{mensagemSucesso}</p>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
+        <SummaryCard
+          icon={<ShoppingBag className="w-5 h-5 text-[#2d5f4f]" />}
+          label="Itens visíveis"
+          value={itensFiltrados.length}
+          color="bg-[#d4e8df]"
+        />
+
+        <SummaryCard
+          icon={<ImageIcon className="w-5 h-5 text-[#2d5f4f]" />}
+          label="Figurinos"
+          value={totalFigurinos}
+          color="bg-[#e8d4ff]"
+        />
+
+        <SummaryCard
+          icon={<Tag className="w-5 h-5 text-[#2d5f4f]" />}
+          label="Acessórios"
+          value={totalAcessorios}
+          color="bg-[#fff4d4]"
+        />
+
+        <SummaryCard
+          icon={<ShieldCheck className="w-5 h-5 text-[#2d5f4f]" />}
+          label="Taxa média"
+          value={precoMedio}
+          suffix="€"
+          color="bg-[#d4e8ff]"
+        />
+      </div>
+
+      <div className="bg-white rounded-2xl shadow-sm border border-[#e8f0ed] p-5 mb-6">
+        <div className="flex items-center gap-2 mb-4">
+          <SlidersHorizontal className="w-5 h-5 text-[#2d5f4f]" />
+          <h2 className="text-[#2d5f4f]">Filtros</h2>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <label className="flex flex-col gap-2">
+            <span className="text-sm text-[#5a7a6c]">Pesquisar</span>
+
+            <div className="relative">
+              <Search className="w-4 h-4 text-[#7a9a8c] absolute left-3 top-1/2 -translate-y-1/2" />
+
+              <input
+                value={pesquisa}
+                onChange={(event) => setPesquisa(event.target.value)}
+                placeholder="Ex.: Gala, Ballet, sapatilhas..."
+                className="w-full pl-10 pr-4 py-3 rounded-xl border border-[#d9e8e1] bg-[#f8faf9] text-[#2d5f4f] outline-none focus:border-[#2d5f4f]"
+              />
+            </div>
+          </label>
+
+          <label className="flex flex-col gap-2">
+            <span className="text-sm text-[#5a7a6c]">Tipo</span>
+
+            <select
+              value={tipoFiltro}
+              onChange={(event) => setTipoFiltro(event.target.value as TipoFiltro)}
+              className="inputEntartes"
+            >
+              <option value="TODOS">Todos</option>
+              <option value="FIGURINO">Figurinos</option>
+              <option value="ACESSORIO">Acessórios</option>
+              <option value="CALCADO">Calçado</option>
+              <option value="MAQUILHAGEM">Maquilhagem</option>
+              <option value="OUTRO">Outro</option>
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-2">
+            <span className="text-sm text-[#5a7a6c]">Modalidade</span>
+
+            <select
+              value={modalidadeFiltro}
+              onChange={(event) => setModalidadeFiltro(event.target.value)}
+              className="inputEntartes"
+            >
+              <option value="TODAS">Todas</option>
+
+              {modalidades.map((modalidade) => (
+                <option value={modalidade} key={modalidade}>
+                  {modalidade}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </div>
+
+      {mostraMeusAnuncios && (
+        <section className="mb-8 bg-white rounded-2xl shadow-sm border border-[#e8f0ed] p-5">
+          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between mb-4">
+            <div>
+              <h2 className="text-[#2d5f4f]">Meus anúncios</h2>
+              <p className="text-sm text-[#7a9a8c]">
+                Gere rapidamente os teus anúncios e muda entre disponível/indisponível sem criar um novo.
+              </p>
+            </div>
+
+            <button
+              onClick={abrirModalPublicar}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-[#f0f6f3] transition-colors"
+            >
+              <Upload className="w-4 h-4" />
+              Novo anúncio
+            </button>
+          </div>
+
+          {meusAnuncios.length === 0 ? (
+            <p className="text-sm text-[#7a9a8c]">
+              Ainda não tens anúncios criados neste perfil.
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {meusAnuncios.map((item) => (
+                <article
+                  key={`meu-${item.id}`}
+                  className="rounded-xl border border-[#e8f0ed] bg-[#f8faf9] p-4"
+                >
+                  <div className="flex items-start justify-between gap-3 mb-3">
+                    <div>
+                      <h3 className="text-[#2d5f4f] mb-1">{item.nome}</h3>
+                      <p className="text-xs text-[#7a9a8c]">{tipoLabels[item.tipo]} · {item.modalidade}</p>
+                    </div>
+
+                    <span className="px-3 py-1 rounded-full bg-white border border-[#e8f0ed] text-[#5a7a6c] text-xs">
+                      {estadoAnuncioLabels[item.estadoAnuncio] ?? item.estadoAnuncio}
+                    </span>
+                  </div>
+
+                  <div className="space-y-2 mb-4">
+                    <InfoLine label="Origem" value={getOrigemComNome(item, currentUser, currentUserIds)} />
+                    <InfoLine label="Contacto" value={getContactoItem(item)} />
+                    <InfoLine label="Aluguer" value={getPeriodoAluguer(item)} />
+                    <InfoLine label="Taxa" value={getTaxaAluguer(item)} />
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => abrirModalEditar(item)}
+                      className="px-4 py-2 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] transition-colors"
+                    >
+                      Editar
+                    </button>
+
+                    <button
+                      onClick={() => void alternarDisponibilidade(item)}
+                      disabled={isSaving || item.estadoAnuncio === 'ENCERRADO'}
+                      className="px-4 py-2 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-white transition-colors disabled:opacity-60"
+                    >
+                      {anuncioEstaDisponivel(item) ? 'Indisponível' : 'Disponível'}
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {itensFiltrados.length === 0 ? (
+        <div className="bg-white rounded-2xl shadow-sm border border-[#e8f0ed] p-10 text-center">
+          <ShoppingBag className="w-10 h-10 text-[#7a9a8c] mx-auto mb-3" />
+          <h3 className="text-[#2d5f4f] mb-2">Sem resultados</h3>
+          <p className="text-[#7a9a8c]">
+            Não foram encontrados figurinos ou acessórios com os filtros selecionados.
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+          {itensFiltrados.map((item) => {
+            const aluguerSolicitado =
+              pedidosAluguer.includes(item.id) ||
+              item.requisicoes.some((requisicao) => requisicao.utilizadorId === currentUserId);
+            const anuncioAtivo = item.estadoAnuncio === 'ATIVO';
+            const donoDoItem = item.utilizadorId === currentUserId;
+            const podeSolicitar = anuncioAtivo && !donoDoItem;
+
+            return (
+              <article
+                key={item.id}
+                className="bg-white rounded-2xl shadow-sm border border-[#e8f0ed] overflow-hidden hover:shadow-md transition-shadow"
+              >
+                <div className="h-52 bg-[#f0f6f3] flex items-center justify-center border-b border-[#e8f0ed]">
+                  {item.imagemUrl ? (
+                    <img
+                      src={item.imagemUrl}
+                      alt={item.nome}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="text-center text-[#7a9a8c]">
+                      <ImageIcon className="w-10 h-10 mx-auto mb-2" />
+                      <p className="text-sm">Imagem do figurino/acessório</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-5">
+                  <div className="flex items-start justify-between gap-3 mb-3">
+                    <div>
+                      <h3 className="text-[#2d5f4f] mb-1">{item.nome}</h3>
+                      <p className="text-sm text-[#7a9a8c]">{item.modalidade}</p>
+                    </div>
+
+                    <div className="flex flex-col items-end gap-2">
+                      <span className="px-3 py-1 rounded-full bg-[#d4e8df] text-[#2d5f4f] text-xs whitespace-nowrap">
+                        {tipoLabels[item.tipo]}
+                      </span>
+
+                      <span className="px-3 py-1 rounded-full bg-[#f0f6f3] text-[#5a7a6c] text-xs whitespace-nowrap">
+                        {estadoAnuncioLabels[item.estadoAnuncio] ?? item.estadoAnuncio}
+                      </span>
+                    </div>
+                  </div>
+
+                  <p className="text-sm text-[#5a7a6c] mb-4">{item.descricao}</p>
+
+                  <div className="space-y-3 mb-5">
+                    <InfoLine label="Tamanho" value={item.tamanho} />
+                    <InfoLine label="Estado" value={item.estadoConservacao} />
+                    <InfoLine label="Origem" value={getOrigemComNome(item, currentUser, currentUserIds)} />
+                    <InfoLine label="Contacto" value={getContactoItem(item)} />
+
+                    <div className="flex items-start gap-2 text-sm text-[#5a7a6c]">
+                      <Calendar className="w-4 h-4 mt-0.5 text-[#7a9a8c]" />
+                      <span>
+                        Aluguer: {getPeriodoAluguer(item)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-[#e8f0ed]">
+                    <div>
+                      <p className="text-xs text-[#7a9a8c]">Taxa</p>
+                      <p className="text-xl text-[#2d5f4f]">{item.preco}€</p>
+                      <p className="text-xs text-[#7a9a8c]">por período de aluguer</p>
+                    </div>
+
+                    {(isAluno || isEncarregado) && (
+                      <button
+                        onClick={() => solicitarAluguer(item)}
+                        disabled={aluguerSolicitado || !podeSolicitar}
+                        className={`px-4 py-2 rounded-xl transition-colors ${
+                          aluguerSolicitado || !podeSolicitar
+                            ? 'bg-[#d4e8df] text-[#2d5f4f] cursor-not-allowed'
+                            : 'bg-[#2d5f4f] text-white hover:bg-[#244c40]'
+                        }`}
+                      >
+                        {aluguerSolicitado ? 'Solicitado' : 'Solicitar aluguer'}
+                      </button>
+                    )}
+
+                    {isProfessor && (
+                      <button
+                        onClick={() => setDetalheItem(item)}
+                        className="px-4 py-2 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-[#f0f6f3] transition-colors"
+                      >
+                        Ver detalhes
+                      </button>
+                    )}
+
+                    {(donoDoItem || isCoordenacao) && (
+                      <button
+                        onClick={() => void alternarDisponibilidade(item)}
+                        disabled={isSaving || item.estadoAnuncio === 'ENCERRADO'}
+                        className="px-4 py-2 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-[#f0f6f3] transition-colors disabled:opacity-60"
+                      >
+                        {anuncioEstaDisponivel(item) ? 'Marcar indisponível' : 'Marcar disponível'}
+                      </button>
+                    )}
+
+                    {isCoordenacao && (
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          onClick={() => setDetalheItem(item)}
+                          className="px-4 py-2 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-[#f0f6f3] transition-colors"
+                        >
+                          Requisições
+                        </button>
+
+                        <button
+                          onClick={() => abrirModalEditar(item)}
+                          className="px-4 py-2 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] transition-colors"
+                        >
+                          Gerir item
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+
+      {modalAberta && (
+        <Modal onClose={fecharModal}>
+          <div className="flex items-start justify-between gap-4 mb-6">
+            <div>
+              <h2 className="text-[#2d5f4f] mb-1">
+                {modoEdicao ? 'Gerir figurino/acessório' : 'Publicar figurino/acessório'}
+              </h2>
+
+              <p className="text-sm text-[#7a9a8c]">
+                Inclui origem, contactos e o intervalo de aluguer para facilitar a comunicação.
+              </p>
+            </div>
+
+            <button
+              onClick={fecharModal}
+              className="p-2 rounded-lg hover:bg-[#f0f6f3]"
+              aria-label="Fechar modal"
+            >
+              <X className="w-5 h-5 text-[#2d5f4f]" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <FormField label="Nome">
+              <input
+                value={formItem.nome}
+                onChange={(event) => atualizarForm('nome', event.target.value)}
+                className="inputEntartes"
+                placeholder="Ex.: Figurino Gala Primavera"
+              />
+            </FormField>
+
+            <FormField label="Tipo">
+              <select
+                value={formItem.tipo}
+                onChange={(event) =>
+                  atualizarForm('tipo', event.target.value as TipoFigurinoAcessorio)
+                }
+                className="inputEntartes"
+              >
+                <option value="FIGURINO">Figurino</option>
+                <option value="ACESSORIO">Acessório</option>
+                <option value="CALCADO">Calçado</option>
+                <option value="MAQUILHAGEM">Maquilhagem</option>
+                <option value="OUTRO">Outro</option>
+              </select>
+            </FormField>
+
+            <FormField label="Modalidade">
+              <select
+                value={formItem.modalidade}
+                onChange={(event) => atualizarForm('modalidade', event.target.value)}
+                className="inputEntartes"
+              >
+                {modalidades.map((modalidade) => (
+                  <option value={modalidade} key={modalidade}>
+                    {modalidade}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+
+            <FormField label="Tamanho">
+              <input
+                value={formItem.tamanho}
+                onChange={(event) => atualizarForm('tamanho', event.target.value)}
+                className="inputEntartes"
+                placeholder="Ex.: 10/12 anos, M, 38..."
+              />
+            </FormField>
+
+            <FormField label="Estado de conservação">
+              <input
+                value={formItem.estadoConservacao}
+                onChange={(event) => atualizarForm('estadoConservacao', event.target.value)}
+                className="inputEntartes"
+                placeholder="Ex.: Bom, Muito bom, Usado..."
+              />
+            </FormField>
+
+            <FormField label="Origem">
+              <input
+                value={formItem.origem}
+                onChange={(event) => atualizarForm('origem', event.target.value)}
+                className="inputEntartes"
+                placeholder="Ex.: Família, Escola, Professor..."
+              />
+            </FormField>
+
+            <FormField label="Nome da origem/responsável">
+              <input
+                value={formItem.origemNome}
+                onChange={(event) => atualizarForm('origemNome', event.target.value)}
+                className="inputEntartes"
+                placeholder="Ex.: João Silva, Diana Sá Carneiro..."
+              />
+            </FormField>
+
+            <FormField label="Email de contacto">
+              <input
+                value={formItem.contactoEmail}
+                onChange={(event) => atualizarForm('contactoEmail', event.target.value)}
+                className="inputEntartes"
+                placeholder="email@exemplo.pt"
+              />
+            </FormField>
+
+            <FormField label="Telefone de contacto">
+              <input
+                value={formItem.contactoTelefone}
+                onChange={(event) => atualizarForm('contactoTelefone', event.target.value)}
+                className="inputEntartes"
+                placeholder="912 345 678"
+              />
+            </FormField>
+
+            <FormField label="Disponível desde">
+              <input
+                value={formItem.dataInicioDisponibilidade}
+                onChange={(event) =>
+                  atualizarForm('dataInicioDisponibilidade', event.target.value)
+                }
+                type="date"
+                className="inputEntartes"
+              />
+            </FormField>
+
+            <FormField label="Disponível até">
+              <input
+                value={formItem.dataFimDisponibilidade}
+                onChange={(event) =>
+                  atualizarForm('dataFimDisponibilidade', event.target.value)
+                }
+                type="date"
+                className="inputEntartes"
+              />
+            </FormField>
+
+            <FormField label="Taxa (€)">
+              <input
+                value={formItem.preco}
+                onChange={(event) => atualizarForm('preco', event.target.value)}
+                type="number"
+                min="0"
+                className="inputEntartes"
+              />
+            </FormField>
+
+            <FormField label="URL da imagem">
+              <input
+                value={formItem.imagemUrl}
+                onChange={(event) => atualizarForm('imagemUrl', event.target.value)}
+                className="inputEntartes"
+                placeholder="https://..."
+              />
+            </FormField>
+
+            <div className="md:col-span-2">
+              <FormField label="Descrição">
+                <textarea
+                  value={formItem.descricao}
+                  onChange={(event) => atualizarForm('descricao', event.target.value)}
+                  className="inputEntartes min-h-28 resize-none"
+                  placeholder="Descrição do figurino/acessório..."
+                />
+              </FormField>
+            </div>
+          </div>
+
+          <div className="flex flex-col-reverse md:flex-row md:items-center md:justify-between gap-3 mt-6">
+            <div>
+              {modoEdicao && (
+                <button
+                  onClick={encerrarAnuncioAtual}
+                  disabled={isSaving}
+                  className="px-5 py-3 rounded-xl border border-[#ffd2d2] text-[#9a3a3a] hover:bg-[#fff5f5] transition-colors disabled:opacity-70"
+                >
+                  Remover anúncio
+                </button>
+              )}
+            </div>
+
+            <div className="flex flex-col-reverse md:flex-row md:items-center md:justify-end gap-3">
+              <button
+                onClick={fecharModal}
+                className="px-5 py-3 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-[#f0f6f3] transition-colors"
+              >
+                Cancelar
+              </button>
+
+              <button
+                onClick={guardarItem}
+                disabled={isSaving}
+                className="px-5 py-3 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] transition-colors disabled:opacity-70"
+              >
+                {isSaving
+                  ? 'A guardar...'
+                  : modoEdicao
+                    ? 'Guardar alterações'
+                    : 'Publicar'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {detalheItem && (
+        <Modal onClose={() => setDetalheItem(null)}>
+          <div className="flex items-start justify-between gap-4 mb-6">
+            <div>
+              <h2 className="text-[#2d5f4f] mb-1">{detalheItem.nome}</h2>
+              <p className="text-sm text-[#7a9a8c]">{tipoLabels[detalheItem.tipo]}</p>
+            </div>
+
+            <button
+              onClick={() => setDetalheItem(null)}
+              className="p-2 rounded-lg hover:bg-[#f0f6f3]"
+              aria-label="Fechar detalhes"
+            >
+              <X className="w-5 h-5 text-[#2d5f4f]" />
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            <p className="text-[#5a7a6c]">{detalheItem.descricao}</p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <InfoBox label="Modalidade" value={detalheItem.modalidade} />
+              <InfoBox label="Tamanho" value={detalheItem.tamanho} />
+              <InfoBox label="Estado" value={detalheItem.estadoConservacao} />
+              <InfoBox label="Origem" value={getOrigemComNome(detalheItem, currentUser, currentUserIds)} />
+              <InfoBox label="Contacto" value={getContactoItem(detalheItem)} />
+              <InfoBox
+                label="Disponibilidade"
+                value={`${formatDate(detalheItem.dataInicioDisponibilidade)} a ${formatDate(
+                  detalheItem.dataFimDisponibilidade
+                )}`}
+              />
+              <InfoBox label="Taxa" value={getTaxaAluguer(detalheItem)} />
+            </div>
+
+            {isCoordenacao && (
+              <div className="pt-5 border-t border-[#e8f0ed]">
+                <h3 className="text-[#2d5f4f] mb-3">Requisições</h3>
+
+                {detalheItem.requisicoes.length === 0 ? (
+                  <p className="text-sm text-[#7a9a8c]">Ainda não existem requisições para este item.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {detalheItem.requisicoes.map((requisicao) => (
+                      <div
+                        key={getRequisicaoId(requisicao)}
+                        className="rounded-xl bg-[#f8faf9] border border-[#e8f0ed] p-4"
+                      >
+                        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                          <div>
+                            <p className="text-sm text-[#2d5f4f]">
+                              Utilizador: {requisicao.utilizadorId}
+                            </p>
+                            <p className="text-xs text-[#7a9a8c] mt-1">
+                              Estado: {estadoRequisicaoLabels[requisicao.estado] ?? requisicao.estado}
+                            </p>
+                            {requisicao.mensagem && (
+                              <p className="text-sm text-[#5a7a6c] mt-2">{requisicao.mensagem}</p>
+                            )}
+                          </div>
+
+                          {requisicao.estado === 'PENDENTE' && (
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => aceitarRequisicao(detalheItem, requisicao)}
+                                className="px-3 py-2 rounded-lg bg-[#2d5f4f] text-white hover:bg-[#244c40] transition-colors"
+                              >
+                                Aceitar
+                              </button>
+
+                              <button
+                                onClick={() => rejeitarRequisicao(detalheItem, requisicao)}
+                                className="px-3 py-2 rounded-lg border border-[#ffd2d2] text-[#9a3a3a] hover:bg-[#fff5f5] transition-colors"
+                              >
+                                Rejeitar
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function Modal({
+  children,
+  onClose,
+}: {
+  children: ReactNode;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <button
+        className="absolute inset-0 bg-black/30"
+        onClick={onClose}
+        aria-label="Fechar"
+      />
+
+      <div className="relative bg-white rounded-2xl shadow-xl border border-[#e8f0ed] p-6 w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function SummaryCard({
+  icon,
+  label,
+  value,
+  suffix = '',
+  color,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: number;
+  suffix?: string;
+  color: string;
+}) {
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-[#e8f0ed] p-5">
+      <div className="flex items-center gap-3">
+        <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${color}`}>
+          {icon}
+        </div>
+
+        <div>
+          <p className="text-sm text-[#7a9a8c]">{label}</p>
+          <p className="text-2xl text-[#2d5f4f]">
+            {value}
+            {suffix}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FormField({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <label className="flex flex-col gap-2">
+      <span className="text-sm text-[#5a7a6c]">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function InfoLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between text-sm">
+      <span className="text-[#7a9a8c]">{label}</span>
+      <span className="text-[#2d5f4f]">{value}</span>
+    </div>
+  );
+}
+
+function InfoBox({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl bg-[#f8faf9] border border-[#e8f0ed] p-4">
+      <p className="text-xs text-[#7a9a8c] mb-1">{label}</p>
+      <p className="text-sm text-[#2d5f4f]">{value}</p>
+    </div>
+  );
+}
