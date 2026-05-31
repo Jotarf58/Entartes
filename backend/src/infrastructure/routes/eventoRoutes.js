@@ -23,6 +23,7 @@ router.post("/", authMiddleware, autorizarTipos("DIRECAO", "ADMIN"), (req, res) 
 router.patch("/:id", authMiddleware, autorizarTipos("DIRECAO", "ADMIN"), (req, res) => eventoController.atualizar(req, res));
 router.patch("/:id/estado", authMiddleware, autorizarTipos("DIRECAO", "ADMIN"), (req, res) => eventoController.atualizarEstado(req, res));
 router.delete("/:id", authMiddleware, autorizarTipos("DIRECAO", "ADMIN"), (req, res) => eventoController.remover(req, res));
+router.post("/:id/comunicados", authMiddleware, autorizarTipos("DIRECAO", "ADMIN", "PROFESSOR"), (req, res) => eventoController.adicionarComunicado(req, res));
 router.post("/:id/autorizacoes", authMiddleware, (req, res) => eventoController.criarAutorizacao(req, res));
 router.get("/:id/autorizacoes", authMiddleware, autorizarTipos("DIRECAO", "ADMIN"), (req, res) => eventoController.listarAutorizacoes(req, res));
 

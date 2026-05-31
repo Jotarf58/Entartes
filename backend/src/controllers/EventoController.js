@@ -62,6 +62,26 @@ class EventoController {
         }
     }
 
+    async adicionarComunicado(req, res) {
+        try {
+            if (!req.body.mensagem || !req.body.mensagem.trim()) {
+                return res.status(400).json({ erro: "A mensagem do comunicado é obrigatória." });
+            }
+
+            const evento = await this.eventoRepository.adicionarComunicado(req.params.id, {
+                autorNome: req.body.autorNome || req.utilizador?.perfilAtivo?.nome || "Ent’artes",
+                autorPerfil: req.body.autorPerfil || req.utilizador?.perfilAtivo?.tipoPerfil || "",
+                mensagem: req.body.mensagem.trim()
+            });
+
+            if (!evento) return res.status(404).json({ erro: "Evento não encontrado." });
+
+            res.status(201).json({ mensagem: "Comunicado publicado com sucesso.", evento });
+        } catch (erro) {
+            res.status(400).json({ erro: erro.message });
+        }
+    }
+
     async criarAutorizacao(req, res) {
         try {
             const evento = await this.eventoRepository.buscarPorId(req.params.id);

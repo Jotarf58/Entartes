@@ -333,6 +333,28 @@ function anuncioEstaDisponivel(item: MarketplaceItem) {
   return item.estadoAnuncio === 'ATIVO' || item.estadoAnuncio === 'PUBLICADO';
 }
 
+function getRequisicaoNome(requisicao: RequisicaoBackend) {
+  const nome = requisicao.perfilNome?.trim();
+
+  if (nome && !isMongoObjectId(nome)) {
+    return nome;
+  }
+
+  return requisicao.utilizadorId;
+}
+
+function getPeriodoRequisicao(requisicao: RequisicaoBackend) {
+  if (!requisicao.dataInicio && !requisicao.dataFim) {
+    return '';
+  }
+
+  return `${formatDate(requisicao.dataInicio ?? '')} a ${formatDate(requisicao.dataFim ?? '')}`;
+}
+
+function contarRequisicoesPendentes(item: MarketplaceItem) {
+  return item.requisicoes.filter((requisicao) => requisicao.estado === 'PENDENTE').length;
+}
+
 export default function Marketplace({ currentUser }: { currentUser: CurrentUser }) {
   const isAluno = currentUser.role === 'ALUNO';
   const isEncarregado = currentUser.role === 'ENCARREGADO';
@@ -376,6 +398,16 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
   const [detalheItem, setDetalheItem] = useState<MarketplaceItem | null>(null);
   const [pedidosAluguer, setPedidosAluguer] = useState<string[]>([]);
   const [mensagemSucesso, setMensagemSucesso] = useState('');
+
+  const [itemAluguer, setItemAluguer] = useState<MarketplaceItem | null>(null);
+  const [aluguerInicio, setAluguerInicio] = useState('');
+  const [aluguerFim, setAluguerFim] = useState('');
+  const [importarEscolaId, setImportarEscolaId] = useState('');
+
+  const itensEscola = useMemo(
+    () => itens.filter((item) => item.origem === 'ESCOLA' || item.origem === 'Escola'),
+    [itens]
+  );
 
   useEffect(() => {
     async function carregarInventario() {
@@ -458,6 +490,7 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
   function abrirModalPublicar() {
     setModoEdicao(false);
     setItemEditandoId(null);
+    setImportarEscolaId('');
     setFormItem({
       ...criarFormularioVazio(),
       origemNome: currentUser.name,
@@ -585,23 +618,95 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
     }
   }
 
-  async function solicitarAluguer(item: MarketplaceItem) {
+  function abrirPedidoAluguer(item: MarketplaceItem) {
+    setItemAluguer(item);
+    setAluguerInicio(item.dataInicioDisponibilidade || '');
+    setAluguerFim(item.dataFimDisponibilidade || '');
+    setMensagemSucesso('');
+  }
+
+  function fecharPedidoAluguer() {
+    setItemAluguer(null);
+    setAluguerInicio('');
+    setAluguerFim('');
+  }
+
+  async function confirmarAluguer() {
+    if (!itemAluguer) return;
+
+    if (!aluguerInicio || !aluguerFim) {
+      setMensagemSucesso('Escolhe as datas de início e fim do aluguer.');
+      return;
+    }
+
+    if (aluguerInicio > aluguerFim) {
+      setMensagemSucesso('A data de início não pode ser posterior à data de fim.');
+      return;
+    }
+
+    const inicioDisponivel = itemAluguer.dataInicioDisponibilidade;
+    const fimDisponivel = itemAluguer.dataFimDisponibilidade;
+
+    if (
+      (inicioDisponivel && aluguerInicio < inicioDisponivel) ||
+      (fimDisponivel && aluguerFim > fimDisponivel)
+    ) {
+      setMensagemSucesso(
+        `As datas têm de estar dentro do período disponível (${getPeriodoAluguer(itemAluguer)}).`
+      );
+      return;
+    }
+
     try {
+      setIsSaving(true);
       setMensagemSucesso('');
 
-      const itemAtualizado = await requisitarItemInventario(item.id, {
+      const itemAtualizado = await requisitarItemInventario(itemAluguer.id, {
         utilizadorId: currentUserId,
-        mensagem: `Pedido de aluguer/requisição feito por ${currentUser.name}.`,
+        perfilNome: currentUser.name,
+        mensagem: `Pedido de aluguer de ${formatDate(aluguerInicio)} a ${formatDate(
+          aluguerFim
+        )} feito por ${currentUser.name}.`,
+        dataInicio: aluguerInicio,
+        dataFim: aluguerFim,
       });
 
       atualizarItemNaLista(normalizarItemBackend(itemAtualizado));
       setPedidosAluguer((atuais) =>
-        atuais.includes(item.id) ? atuais : [...atuais, item.id]
+        atuais.includes(itemAluguer.id) ? atuais : [...atuais, itemAluguer.id]
       );
-      setMensagemSucesso(`Pedido de aluguer enviado para "${item.nome}".`);
+      setMensagemSucesso(`Pedido de aluguer enviado para "${itemAluguer.nome}".`);
+      fecharPedidoAluguer();
     } catch (error) {
       setMensagemSucesso(getErrorMessage(error));
+    } finally {
+      setIsSaving(false);
     }
+  }
+
+  function importarItemEscola(itemId: string) {
+    setImportarEscolaId(itemId);
+
+    if (!itemId) return;
+
+    const base = itens.find((item) => item.id === itemId);
+
+    if (!base) return;
+
+    setFormItem((atual) => ({
+      ...atual,
+      nome: base.nome,
+      descricao: base.descricao,
+      tipo: base.tipo,
+      modalidade: base.modalidade,
+      tamanho: base.tamanho,
+      estadoConservacao: base.estadoConservacao,
+      origem: 'Escola',
+      dataInicioDisponibilidade: base.dataInicioDisponibilidade || atual.dataInicioDisponibilidade,
+      dataFimDisponibilidade: base.dataFimDisponibilidade || atual.dataFimDisponibilidade,
+      preco: String(base.preco),
+      imagemUrl: base.imagemUrl,
+    }));
   }
 
   async function encerrarAnuncioAtual() {
@@ -937,6 +1042,62 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
                       {anuncioEstaDisponivel(item) ? 'Indisponível' : 'Disponível'}
                     </button>
                   </div>
+
+                  <div className="mt-4 pt-4 border-t border-[#e8f0ed]">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-sm text-[#2d5f4f]">Pedidos recebidos</p>
+                      <span className="px-2 py-0.5 rounded-full bg-[#fff4d4] text-[#8a6d1d] text-xs">
+                        {contarRequisicoesPendentes(item)} pendentes
+                      </span>
+                    </div>
+
+                    {item.requisicoes.length === 0 ? (
+                      <p className="text-xs text-[#7a9a8c]">Ainda sem pedidos de aluguer.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {item.requisicoes.map((requisicao) => (
+                          <div
+                            key={getRequisicaoId(requisicao)}
+                            className="rounded-lg bg-white border border-[#e8f0ed] p-3"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="text-sm text-[#2d5f4f] truncate">
+                                  {getRequisicaoNome(requisicao)}
+                                </p>
+                                {getPeriodoRequisicao(requisicao) && (
+                                  <p className="text-xs text-[#7a9a8c]">
+                                    {getPeriodoRequisicao(requisicao)}
+                                  </p>
+                                )}
+                                <p className="text-xs text-[#7a9a8c]">
+                                  {estadoRequisicaoLabels[requisicao.estado] ?? requisicao.estado}
+                                </p>
+                              </div>
+
+                              {requisicao.estado === 'PENDENTE' && (
+                                <div className="flex gap-1">
+                                  <button
+                                    onClick={() => aceitarRequisicao(item, requisicao)}
+                                    className="px-2 py-1 rounded-lg bg-[#2d5f4f] text-white text-xs hover:bg-[#244c40]"
+                                  >
+                                    Aceitar
+                                  </button>
+
+                                  <button
+                                    onClick={() => rejeitarRequisicao(item, requisicao)}
+                                    className="px-2 py-1 rounded-lg border border-[#ffd2d2] text-[#9a3a3a] text-xs hover:bg-[#fff5f5]"
+                                  >
+                                    Rejeitar
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </article>
               ))}
             </div>
@@ -1025,7 +1186,7 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
 
                     {(isAluno || isEncarregado) && (
                       <button
-                        onClick={() => solicitarAluguer(item)}
+                        onClick={() => abrirPedidoAluguer(item)}
                         disabled={aluguerSolicitado || !podeSolicitar}
                         className={`px-4 py-2 rounded-xl transition-colors ${
                           aluguerSolicitado || !podeSolicitar
@@ -1102,6 +1263,30 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
               <X className="w-5 h-5 text-[#2d5f4f]" />
             </button>
           </div>
+
+          {!modoEdicao && itensEscola.length > 0 && (
+            <div className="mb-4 rounded-xl bg-[#f0f6f3] border border-[#d9e8e1] p-4">
+              <FormField label="Importar do inventário da escola">
+                <select
+                  value={importarEscolaId}
+                  onChange={(event) => importarItemEscola(event.target.value)}
+                  className="inputEntartes"
+                >
+                  <option value="">Começar com um anúncio em branco</option>
+
+                  {itensEscola.map((item) => (
+                    <option value={item.id} key={`escola-${item.id}`}>
+                      {item.nome} · {tipoLabels[item.tipo]}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
+
+              <p className="text-xs text-[#7a9a8c] mt-2">
+                Seleciona um item do inventário da escola para preencher automaticamente o anúncio.
+              </p>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <FormField label="Nome">
@@ -1338,8 +1523,13 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
                         <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
                           <div>
                             <p className="text-sm text-[#2d5f4f]">
-                              Utilizador: {requisicao.utilizadorId}
+                              {getRequisicaoNome(requisicao)}
                             </p>
+                            {getPeriodoRequisicao(requisicao) && (
+                              <p className="text-xs text-[#7a9a8c] mt-1">
+                                Aluguer: {getPeriodoRequisicao(requisicao)}
+                              </p>
+                            )}
                             <p className="text-xs text-[#7a9a8c] mt-1">
                               Estado: {estadoRequisicaoLabels[requisicao.estado] ?? requisicao.estado}
                             </p>
@@ -1372,6 +1562,75 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
                 )}
               </div>
             )}
+          </div>
+        </Modal>
+      )}
+
+      {itemAluguer && (
+        <Modal onClose={fecharPedidoAluguer}>
+          <div className="flex items-start justify-between gap-4 mb-6">
+            <div>
+              <h2 className="text-[#2d5f4f] mb-1">Solicitar aluguer</h2>
+              <p className="text-sm text-[#7a9a8c]">
+                {itemAluguer.nome} · {getTaxaAluguer(itemAluguer)}
+              </p>
+            </div>
+
+            <button
+              onClick={fecharPedidoAluguer}
+              className="p-2 rounded-lg hover:bg-[#f0f6f3]"
+              aria-label="Fechar"
+            >
+              <X className="w-5 h-5 text-[#2d5f4f]" />
+            </button>
+          </div>
+
+          <div className="rounded-xl bg-[#f8faf9] border border-[#e8f0ed] p-4 mb-5 flex items-start gap-2">
+            <Calendar className="w-4 h-4 mt-0.5 text-[#7a9a8c]" />
+            <p className="text-sm text-[#5a7a6c]">
+              Período disponível: {getPeriodoAluguer(itemAluguer)}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <FormField label="Início do aluguer">
+              <input
+                value={aluguerInicio}
+                onChange={(event) => setAluguerInicio(event.target.value)}
+                type="date"
+                min={itemAluguer.dataInicioDisponibilidade || undefined}
+                max={itemAluguer.dataFimDisponibilidade || undefined}
+                className="inputEntartes"
+              />
+            </FormField>
+
+            <FormField label="Fim do aluguer">
+              <input
+                value={aluguerFim}
+                onChange={(event) => setAluguerFim(event.target.value)}
+                type="date"
+                min={aluguerInicio || itemAluguer.dataInicioDisponibilidade || undefined}
+                max={itemAluguer.dataFimDisponibilidade || undefined}
+                className="inputEntartes"
+              />
+            </FormField>
+          </div>
+
+          <div className="flex flex-col-reverse md:flex-row md:items-center md:justify-end gap-3 mt-6">
+            <button
+              onClick={fecharPedidoAluguer}
+              className="px-5 py-3 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-[#f0f6f3] transition-colors"
+            >
+              Cancelar
+            </button>
+
+            <button
+              onClick={() => void confirmarAluguer()}
+              disabled={isSaving}
+              className="px-5 py-3 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] transition-colors disabled:opacity-70"
+            >
+              {isSaving ? 'A enviar...' : 'Enviar pedido de aluguer'}
+            </button>
           </div>
         </Modal>
       )}

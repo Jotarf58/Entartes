@@ -24,6 +24,14 @@ class EventoRepository {
         return await EventoModel.findByIdAndDelete(id);
     }
 
+    async adicionarComunicado(id, dados) {
+        return await EventoModel.findByIdAndUpdate(
+            id,
+            { $push: { comunicados: dados } },
+            { new: true, runValidators: true }
+        );
+    }
+
     async criarAutorizacao(dados) {
         return await AutorizacaoEventoModel.create(dados);
     }

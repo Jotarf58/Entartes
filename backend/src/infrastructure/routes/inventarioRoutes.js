@@ -29,8 +29,8 @@ router.post("/anunciar", authMiddleware, (req, res) => inventarioController.anun
 router.post("/:id/requisicao", authMiddleware, (req, res) => inventarioController.requisitar(req, res));
 router.patch("/:id/anuncio", authMiddleware, (req, res) => inventarioController.editarAnuncio(req, res));
 router.patch("/:id/encerrar", authMiddleware, (req, res) => inventarioController.encerrarAnuncio(req, res));
-router.patch("/:id/requisicoes/:requisicaoId/aceitar", authMiddleware, autorizarTipos("ADMIN", "DIRECAO", "ENCARREGADO"), (req, res) => inventarioController.aceitarRequisicao(req, res));
-router.patch("/:id/requisicoes/:requisicaoId/rejeitar", authMiddleware, autorizarTipos("ADMIN", "DIRECAO", "ENCARREGADO"), (req, res) => inventarioController.rejeitarRequisicao(req, res));
+router.patch("/:id/requisicoes/:requisicaoId/aceitar", authMiddleware, (req, res) => inventarioController.aceitarRequisicao(req, res));
+router.patch("/:id/requisicoes/:requisicaoId/rejeitar", authMiddleware, (req, res) => inventarioController.rejeitarRequisicao(req, res));
 router.delete("/:id", authMiddleware, (req, res) => inventarioController.remover(req, res));
 
 module.exports = router;

@@ -18,7 +18,10 @@ export type RequisicaoBackend = {
   _id?: string;
   id?: string;
   utilizadorId: string;
+  perfilNome?: string;
   mensagem?: string;
+  dataInicio?: string;
+  dataFim?: string;
   estado: EstadoRequisicaoBackend;
   dataRequisicao?: string;
 };
@@ -89,7 +92,10 @@ export type EditarItemInventarioInput = {
 
 export type RequisitarItemInput = {
   utilizadorId: string;
+  perfilNome?: string;
   mensagem?: string;
+  dataInicio?: string;
+  dataFim?: string;
 };
 
 function getId(item: ItemInventarioBackend) {
@@ -209,7 +215,10 @@ export async function requisitarItemInventario(
     `/inventario/${id}/requisicao`,
     {
       utilizadorId: input.utilizadorId,
+      perfilNome: input.perfilNome ?? '',
       mensagem: input.mensagem ?? '',
+      dataInicio: input.dataInicio || null,
+      dataFim: input.dataFim || null,
     }
   );
 

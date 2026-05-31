@@ -18,10 +18,12 @@ import {
 
 import { eventosMock } from '../data/mockEntartes';
 import {
+  adicionarComunicadoEvento,
   atualizarEvento,
   criarEvento,
   listarEventos,
   removerEvento,
+  type ComunicadoApp,
   type EventoApp,
   type EstadoEventoBackend,
 } from '../services/eventosService';
@@ -52,6 +54,7 @@ type EventoView = {
   penteado: string;
   maquilhagem: string;
   observacoes: string;
+  comunicados: ComunicadoApp[];
 };
 
 type EventoForm = {
@@ -139,6 +142,7 @@ function normalizeEventos(): EventoView[] {
       penteado: getStringValue(item, ['penteado', 'cabelo']),
       maquilhagem: getStringValue(item, ['maquilhagem', 'makeup']),
       observacoes: getStringValue(item, ['observacoes', 'notas']),
+      comunicados: [],
     };
   });
 }
@@ -184,7 +188,11 @@ function splitText(value: string) {
     .filter(Boolean);
 }
 
-function formParaEvento(form: EventoForm, id?: string): EventoView {
+function formParaEvento(
+  form: EventoForm,
+  id?: string,
+  comunicados: ComunicadoApp[] = []
+): EventoView {
   return {
     id: id ?? `evento-${Date.now()}`,
     titulo: form.titulo,
@@ -199,6 +207,7 @@ function formParaEvento(form: EventoForm, id?: string): EventoView {
     penteado: form.penteado,
     maquilhagem: form.maquilhagem,
     observacoes: form.observacoes,
+    comunicados,
   };
 }
 
@@ -243,6 +252,7 @@ function eventoAppParaView(evento: EventoApp): EventoView {
     penteado: toText(item.penteado),
     maquilhagem: toText(item.maquilhagem),
     observacoes: typeof item.observacoes === 'string' ? item.observacoes : '',
+    comunicados: evento.comunicados ?? [],
   };
 }
 
@@ -260,6 +270,7 @@ function completarEventoComDadosDoForm(
     data: eventoBase.data,
     estado: eventoBase.estado,
     descricao: eventoBase.descricao,
+    comunicados: eventoBase.comunicados,
   };
 }
 
@@ -332,6 +343,13 @@ export default function Eventos({ currentUser }: { currentUser: CurrentUser }) {
   const [eventoComunicado, setEventoComunicado] = useState<EventoView | null>(null);
   const [eventoAutorizacao, setEventoAutorizacao] = useState<EventoView | null>(null);
   const [autorizacoesConfirmadas, setAutorizacoesConfirmadas] = useState<string[]>([]);
+
+  const [eventoThreadId, setEventoThreadId] = useState<string | null>(null);
+  const [novoComunicado, setNovoComunicado] = useState('');
+  const [enviandoComunicado, setEnviandoComunicado] = useState(false);
+
+  const podePublicarComunicado = isProfessor || isCoordenacao;
+  const eventoThread = eventos.find((evento) => evento.id === eventoThreadId) ?? null;
 
   useEffect(() => {
     let mounted = true;
@@ -466,7 +484,12 @@ export default function Eventos({ currentUser }: { currentUser: CurrentUser }) {
             )
           );
         } else {
-          const eventoAtualizado = formParaEvento(eventoForm, eventoEditandoId);
+          const eventoExistente = eventos.find((evento) => evento.id === eventoEditandoId);
+          const eventoAtualizado = formParaEvento(
+            eventoForm,
+            eventoEditandoId,
+            eventoExistente?.comunicados ?? []
+          );
 
           setEventos((atuais) =>
             atuais.map((evento) =>
@@ -496,6 +519,71 @@ export default function Eventos({ currentUser }: { currentUser: CurrentUser }) {
       setMensagem(`Não foi possível guardar o evento. ${getErrorMessage(error)}`);
     } finally {
       setOperacaoEmCurso(false);
+    }
+  }
+
+  function abrirThread(evento: EventoView) {
+    setEventoThreadId(evento.id);
+    setNovoComunicado('');
+    setMensagem('');
+  }
+
+  function fecharThread() {
+    setEventoThreadId(null);
+    setNovoComunicado('');
+  }
+
+  async function publicarComunicado() {
+    if (!eventoThread) {
+      return;
+    }
+
+    if (!novoComunicado.trim()) {
+      setMensagem('Escreve uma mensagem para publicar no comunicado.');
+      return;
+    }
+
+    try {
+      setEnviandoComunicado(true);
+
+      if (isEventoPersistido(eventoThread.id)) {
+        const eventoAtualizado = await adicionarComunicadoEvento(eventoThread.id, {
+          mensagem: novoComunicado.trim(),
+          autorNome: currentUser.name,
+          autorPerfil: currentUser.roleLabel,
+        });
+
+        setEventos((atuais) =>
+          atuais.map((evento) =>
+            evento.id === eventoThread.id
+              ? { ...evento, comunicados: eventoAtualizado.comunicados }
+              : evento
+          )
+        );
+      } else {
+        const comunicadoLocal: ComunicadoApp = {
+          id: `comunicado-${Date.now()}`,
+          autorNome: currentUser.name,
+          autorPerfil: currentUser.roleLabel,
+          mensagem: novoComunicado.trim(),
+          data: new Date().toISOString(),
+        };
+
+        setEventos((atuais) =>
+          atuais.map((evento) =>
+            evento.id === eventoThread.id
+              ? { ...evento, comunicados: [...evento.comunicados, comunicadoLocal] }
+              : evento
+          )
+        );
+      }
+
+      setNovoComunicado('');
+      setMensagem('Comunicado publicado na thread do evento.');
+    } catch (error) {
+      setMensagem(`Não foi possível publicar o comunicado. ${getErrorMessage(error)}`);
+    } finally {
+      setEnviandoComunicado(false);
     }
   }
 
@@ -763,6 +851,19 @@ export default function Eventos({ currentUser }: { currentUser: CurrentUser }) {
                   </div>
 
                   <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => abrirThread(evento)}
+                      className="flex items-center gap-2 px-4 py-2 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-[#f0f6f3] transition-colors"
+                    >
+                      <Megaphone className="w-4 h-4" />
+                      Comunicados
+                      {evento.comunicados.length > 0 && (
+                        <span className="px-2 py-0.5 rounded-full bg-[#d4e8df] text-[#2d5f4f] text-xs">
+                          {evento.comunicados.length}
+                        </span>
+                      )}
+                    </button>
+
                     {(isAluno || isProfessor) && (
                       <button
                         onClick={() => setEventoComunicado(evento)}
@@ -1104,6 +1205,77 @@ export default function Eventos({ currentUser }: { currentUser: CurrentUser }) {
                 : 'Confirmar autorização'}
             </button>
           </div>
+        </Modal>
+      )}
+
+      {eventoThread && (
+        <Modal onClose={fecharThread}>
+          <ModalHeader
+            title={`Comunicados · ${eventoThread.titulo}`}
+            subtitle="Mural de comunicados do evento partilhado com alunos e encarregados."
+            onClose={fecharThread}
+          />
+
+          <div className="space-y-3 mb-5 max-h-[40vh] overflow-y-auto pr-1">
+            {eventoThread.comunicados.length === 0 ? (
+              <div className="rounded-xl bg-[#f8faf9] border border-[#e8f0ed] p-6 text-center">
+                <Megaphone className="w-8 h-8 text-[#7a9a8c] mx-auto mb-2" />
+                <p className="text-sm text-[#7a9a8c]">
+                  Ainda não há comunicados para este evento.
+                </p>
+              </div>
+            ) : (
+              eventoThread.comunicados.map((comunicado) => (
+                <div
+                  key={comunicado.id}
+                  className="rounded-xl bg-[#f8faf9] border border-[#e8f0ed] p-4"
+                >
+                  <div className="flex items-center justify-between gap-3 mb-1">
+                    <p className="text-sm text-[#2d5f4f]">
+                      {comunicado.autorNome}
+                      {comunicado.autorPerfil ? ` · ${comunicado.autorPerfil}` : ''}
+                    </p>
+
+                    {comunicado.data && (
+                      <p className="text-xs text-[#7a9a8c]">{formatDate(comunicado.data)}</p>
+                    )}
+                  </div>
+
+                  <p className="text-sm text-[#5a7a6c] whitespace-pre-line">
+                    {comunicado.mensagem}
+                  </p>
+                </div>
+              ))
+            )}
+          </div>
+
+          {podePublicarComunicado ? (
+            <div className="rounded-xl border border-[#d9e8e1] p-4">
+              <FormField label="Novo comunicado">
+                <textarea
+                  value={novoComunicado}
+                  onChange={(event) => setNovoComunicado(event.target.value)}
+                  className="inputEntartes min-h-24 resize-none"
+                  placeholder="Escreve um comunicado para o evento..."
+                />
+              </FormField>
+
+              <div className="flex justify-end mt-3">
+                <button
+                  onClick={() => void publicarComunicado()}
+                  disabled={enviandoComunicado}
+                  className="flex items-center gap-2 px-5 py-3 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] transition-colors disabled:opacity-70"
+                >
+                  <Megaphone className="w-4 h-4" />
+                  {enviandoComunicado ? 'A publicar...' : 'Publicar comunicado'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-[#7a9a8c]">
+              Os comunicados são publicados pela coordenação e pelos professores.
+            </p>
+          )}
         </Modal>
       )}
     </div>

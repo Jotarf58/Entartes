@@ -26,6 +26,7 @@ import {
 import {
   aceitarPedidoCoaching,
   aprovarPedidoCoaching,
+  associarVagaAPedido as associarVagaPedidoBackend,
   criarPedidoCoaching,
   criarSessaoCoaching,
   criarVagaCoaching,
@@ -43,6 +44,13 @@ import {
   type ProfessorCoachingOption,
   type VagaCoachingApp,
 } from '../services/coachingService';
+
+import {
+  criarAulaSemanal,
+  listarAulasSemanais,
+  type AulaSemanalApp,
+} from '../services/horarioService';
+import { verificarDisponibilidadeEstudio } from '../services/estudiosService';
 
 import { ApiError } from '../services/api';
 
@@ -346,6 +354,53 @@ function calcularDuracaoMinutos(horaInicio: string, horaFim: string) {
   return Math.min(120, Math.max(30, fim - inicio));
 }
 
+function horaParaMinutos(hora: string) {
+  const [horas, minutos] = hora.split(':').map(Number);
+
+  if (Number.isNaN(horas) || Number.isNaN(minutos)) {
+    return 0;
+  }
+
+  return horas * 60 + minutos;
+}
+
+function normalizarDiaSemanaComparacao(dia: string) {
+  return dia
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace('-feira', '')
+    .trim();
+}
+
+function capitalizarDiaSemana(dia: string) {
+  const mapa: Record<string, string> = {
+    segunda: 'Segunda-feira',
+    terca: 'Terça-feira',
+    quarta: 'Quarta-feira',
+    quinta: 'Quinta-feira',
+    sexta: 'Sexta-feira',
+    sabado: 'Sábado',
+    domingo: 'Domingo',
+  };
+
+  return mapa[normalizarDiaSemanaComparacao(dia)] ?? dia;
+}
+
+function horariosSobrepoem(
+  inicioA: string,
+  fimA: string,
+  inicioB: string,
+  fimB: string
+) {
+  const startA = horaParaMinutos(inicioA);
+  const endA = horaParaMinutos(fimA);
+  const startB = horaParaMinutos(inicioB);
+  const endB = horaParaMinutos(fimB);
+
+  return startA < endB && startB < endA;
+}
+
 function normalizarEstudiosMock(): EstudioOption[] {
   return salas.map((sala, index) => ({
     id: sala.id ?? `estudio-${index}`,
@@ -580,6 +635,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
   const [professoresBd, setProfessoresBd] = useState<ProfessorCoachingOption[]>([]);
   const [pedidos, setPedidos] = useState<PedidoCoaching[]>(normalizarPedidosMock());
   const [vagas, setVagas] = useState<VagaCoaching[]>(normalizarVagasMock());
+  const [aulasHorario, setAulasHorario] = useState<AulaSemanalApp[]>([]);
 
   const [estadoFiltro, setEstadoFiltro] = useState<'TODOS' | EstadoPedido>('TODOS');
   const [modalidadeFiltro, setModalidadeFiltro] = useState('TODAS');
@@ -642,10 +698,13 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
       setEstudios(estudiosFinais);
       setProfessoresBd(professoresFinais);
 
-      const [pedidosBackend, vagasBackend] = await Promise.all([
+      const [pedidosBackend, vagasBackend, aulasBackend] = await Promise.all([
         listarPedidosCoaching().catch(() => []),
         listarVagasCoaching().catch(() => []),
+        listarAulasSemanais().catch(() => []),
       ]);
+
+      setAulasHorario(aulasBackend);
 
       setPedidos(
         pedidosBackend.length > 0
@@ -1077,6 +1136,29 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
     }
   }
 
+  function verificarConflitoHorario(
+    diaSemana: string,
+    horaInicio: string,
+    horaFim: string,
+    salaNome: string
+  ) {
+    const diaAlvo = normalizarDiaSemanaComparacao(diaSemana);
+    const salaAlvo = salaNome.trim().toLowerCase();
+
+    return (
+      aulasHorario.find((aula) => {
+        if (aula.estado === 'CANCELADA') return false;
+
+        const mesmoDia = normalizarDiaSemanaComparacao(aula.diaSemana) === diaAlvo;
+        const mesmaSala = (aula.salaNome || '').trim().toLowerCase() === salaAlvo;
+
+        if (!mesmoDia || !mesmaSala) return false;
+
+        return horariosSobrepoem(horaInicio, horaFim, aula.horaInicio, aula.horaFim);
+      }) ?? null
+    );
+  }
+
   function abrirAssociacao(vaga: VagaCoaching) {
     setVagaSelecionada(vaga);
     setPedidoSelecionadoId(pedidosAssociaveis[0]?.id ?? '');
@@ -1097,15 +1179,53 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
       return;
     }
 
-    const horarioFinal = `${formatDate(vagaSelecionada.dataInicio)}, ${vagaSelecionada.horaInicio}-${vagaSelecionada.horaFim}`;
+    const diaSemana = capitalizarDiaSemana(
+      vagaSelecionada.diaSemana || getDiaSemana(vagaSelecionada.dataInicio)
+    );
+    const horarioFinal = `${diaSemana}, ${formatDate(vagaSelecionada.dataInicio)}, ${vagaSelecionada.horaInicio}-${vagaSelecionada.horaFim}`;
+
+    const conflitoHorario = verificarConflitoHorario(
+      diaSemana,
+      vagaSelecionada.horaInicio,
+      vagaSelecionada.horaFim,
+      vagaSelecionada.salaNome
+    );
+
+    if (conflitoHorario) {
+      setMensagem(
+        `A sala ${vagaSelecionada.salaNome} já está ocupada (${conflitoHorario.turma}) ${diaSemana}, ${conflitoHorario.horaInicio}-${conflitoHorario.horaFim}. Escolhe outra disponibilidade.`
+      );
+      return;
+    }
 
     if (vagaSelecionada.isMock || pedidoSelecionado.isMock) {
+      const aulaCoachingLocal: AulaSemanalApp = {
+        id: slugId(`${vagaSelecionada.id}-${pedidoSelecionado.id}`, 'coaching'),
+        diaSemana,
+        horaInicio: vagaSelecionada.horaInicio,
+        horaFim: vagaSelecionada.horaFim,
+        modalidade: vagaSelecionada.modalidade,
+        turmaId: '',
+        turma: `Coaching — ${pedidoSelecionado.alunoNome}`,
+        professorId: vagaSelecionada.professorId,
+        professorNome: vagaSelecionada.professorNome,
+        salaId: vagaSelecionada.estudioId,
+        salaNome: vagaSelecionada.salaNome,
+        faixaEtaria: pedidoSelecionado.tipoAluno === 'ADULTO' ? 'Adultos' : 'Crianças/Jovens',
+        tipo: 'Coaching',
+        vagas: pedidoSelecionado.tipoCoaching === 'Grupo' ? 6 : 1,
+        inscritos: 1,
+        estado: 'ATIVA',
+      };
+
+      setAulasHorario((atuais) => [aulaCoachingLocal, ...atuais]);
+
       setPedidos((atuais) =>
         atuais.map((pedido) =>
           pedido.id === pedidoSelecionadoId
             ? {
                 ...pedido,
-                estado: 'APROVADO',
+                estado: 'AGENDADO',
                 professorPreferencialId: vagaSelecionada.professorId,
                 professorPreferencialNome: vagaSelecionada.professorNome,
                 modalidade: vagaSelecionada.modalidade,
@@ -1122,24 +1242,85 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
       );
 
       setModalAssociarAberta(false);
-      setMensagem('Vaga mock associada ao pedido com sucesso.');
+      setMensagem('Coaching agendado e adicionado ao horário semanal.');
       return;
     }
 
+    const dataInicioISO = `${vagaSelecionada.dataInicio}T${vagaSelecionada.horaInicio}:00`;
+    const dataFimISO = `${vagaSelecionada.dataInicio}T${vagaSelecionada.horaFim}:00`;
+
     try {
       setIsSaving(true);
+
+      if (vagaSelecionada.estudioId) {
+        try {
+          const disponibilidade = await verificarDisponibilidadeEstudio(
+            vagaSelecionada.estudioId,
+            dataInicioISO,
+            dataFimISO
+          );
+
+          if (!disponibilidade.disponivel) {
+            setMensagem('O estúdio já tem uma sessão de coaching neste horário. Escolhe outra disponibilidade.');
+            setIsSaving(false);
+            return;
+          }
+        } catch {
+          setMensagem('');
+        }
+      }
 
       await criarSessaoCoaching({
         professorId: vagaSelecionada.professorId,
         alunosIds: [pedidoSelecionado.alunoId],
         modalidade: vagaSelecionada.modalidade,
-        estudioId: null,
-        dataInicio: `${vagaSelecionada.dataInicio}T${vagaSelecionada.horaInicio}:00`,
-        dataFim: `${vagaSelecionada.dataInicio}T${vagaSelecionada.horaFim}:00`,
+        estudioId: vagaSelecionada.estudioId || null,
+        dataInicio: dataInicioISO,
+        dataFim: dataFimISO,
         duracaoMinutos: calcularDuracaoMinutos(vagaSelecionada.horaInicio, vagaSelecionada.horaFim),
       });
 
       await fecharVagaCoaching(vagaSelecionada.id);
+
+      try {
+        await associarVagaPedidoBackend(pedidoSelecionado.id, {
+          vagaId: vagaSelecionada.id,
+          professorId: vagaSelecionada.professorId,
+          professorNome: vagaSelecionada.professorNome,
+          salaId: vagaSelecionada.estudioId || null,
+          salaNome: vagaSelecionada.salaNome,
+          horarioFinal,
+          estado: 'AGENDADO',
+        });
+      } catch {
+        setMensagem('');
+      }
+
+      let mensagemHorario = '';
+
+      try {
+        const aulaCoaching = await criarAulaSemanal({
+          diaSemana,
+          horaInicio: vagaSelecionada.horaInicio,
+          horaFim: vagaSelecionada.horaFim,
+          modalidade: vagaSelecionada.modalidade,
+          turma: `Coaching — ${pedidoSelecionado.alunoNome}`,
+          professorId: vagaSelecionada.professorId,
+          professorNome: vagaSelecionada.professorNome,
+          salaId: vagaSelecionada.estudioId || null,
+          salaNome: vagaSelecionada.salaNome,
+          faixaEtaria: pedidoSelecionado.tipoAluno === 'ADULTO' ? 'Adultos' : 'Crianças/Jovens',
+          tipo: 'Coaching',
+          vagas: pedidoSelecionado.tipoCoaching === 'Grupo' ? 6 : 1,
+          inscritos: 1,
+          estado: 'ATIVA',
+        });
+
+        setAulasHorario((atuais) => [aulaCoaching, ...atuais]);
+        mensagemHorario = ' A sessão foi adicionada ao horário semanal.';
+      } catch {
+        mensagemHorario = ' (não foi possível adicionar automaticamente ao horário)';
+      }
 
       setVagas((atuais) =>
         atuais.map((vaga) =>
@@ -1152,6 +1333,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
           pedido.id === pedidoSelecionadoId
             ? {
                 ...pedido,
+                estado: 'AGENDADO',
                 professorPreferencialId: vagaSelecionada.professorId,
                 professorPreferencialNome: vagaSelecionada.professorNome,
                 modalidade: vagaSelecionada.modalidade,
@@ -1162,7 +1344,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
       );
 
       setModalAssociarAberta(false);
-      setMensagem('Sessão de coaching criada e vaga fechada no backend.');
+      setMensagem(`Sessão de coaching criada e vaga fechada no backend.${mensagemHorario}`);
     } catch (error) {
       setMensagem(getErrorMessage(error));
     } finally {

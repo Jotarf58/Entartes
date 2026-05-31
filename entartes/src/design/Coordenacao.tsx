@@ -1208,7 +1208,7 @@ export default function Coordenacao() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
         <SummaryCard
           icon={<Users className="w-5 h-5 text-[#2d5f4f]" />}
           label="Pedidos pendentes"
@@ -1238,7 +1238,7 @@ export default function Coordenacao() {
         />
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[1.1fr_0.9fr] gap-6 mb-8">
+      <div className="grid grid-cols-1 xl:grid-cols-[1.1fr_0.9fr] gap-8 mb-10">
         <section className="bg-white rounded-2xl shadow-sm border border-[#e8f0ed] p-6">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-5">
             <div className="flex items-center gap-2">
@@ -1383,7 +1383,7 @@ export default function Coordenacao() {
         </section>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-8">
+      <div className="space-y-8 mb-10">
         <section className="bg-white rounded-2xl shadow-sm border border-[#e8f0ed] p-6">
           <div className="flex items-center justify-between gap-4 mb-5">
             <div className="flex items-center gap-2">
@@ -1400,7 +1400,7 @@ export default function Coordenacao() {
             </button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {salasLocais.map((sala) => {
               const totalAulas = aulasSemanais.filter((aula) => {
                 const item = aula as Record<string, unknown>;
@@ -1524,14 +1524,14 @@ export default function Coordenacao() {
         </section>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-8">
+      <div className="space-y-8 mb-10">
         <section className="bg-white rounded-2xl shadow-sm border border-[#e8f0ed] p-6">
           <div className="flex items-center gap-2 mb-5">
             <Calendar className="w-5 h-5 text-[#2d5f4f]" />
             <h2 className="text-[#2d5f4f]">Vagas de coaching</h2>
           </div>
 
-          <div className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {vagas.map((vaga) => (
               <article
                 key={vaga.id}
@@ -1581,7 +1581,7 @@ export default function Coordenacao() {
             <h2 className="text-[#2d5f4f]">Calendário geral</h2>
           </div>
 
-          <div className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {calendario.map((item) => (
               <article
                 key={`${item.tipo}-${item.id}`}

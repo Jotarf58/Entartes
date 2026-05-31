@@ -6,6 +6,8 @@ const requisicaoSchema = new mongoose.Schema(
         perfilId: { type: String, default: null },
         perfilNome: { type: String, default: "", trim: true },
         mensagem: { type: String, default: "" },
+        dataInicio: { type: Date, default: null },
+        dataFim: { type: Date, default: null },
         estado: { type: String, enum: ["PENDENTE", "ACEITE", "REJEITADA"], default: "PENDENTE" },
         dataRequisicao: { type: Date, default: Date.now }
     },

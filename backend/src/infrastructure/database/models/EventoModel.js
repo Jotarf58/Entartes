@@ -11,6 +11,16 @@ const apresentacaoSchema = new mongoose.Schema(
     { _id: true }
 );
 
+const comunicadoSchema = new mongoose.Schema(
+    {
+        autorNome: { type: String, default: "", trim: true },
+        autorPerfil: { type: String, default: "", trim: true },
+        mensagem: { type: String, required: true, trim: true },
+        data: { type: Date, default: Date.now }
+    },
+    { _id: true }
+);
+
 const eventoSchema = new mongoose.Schema(
     {
         titulo: { type: String, required: true, trim: true },
@@ -28,7 +38,8 @@ const eventoSchema = new mongoose.Schema(
         acessorios: { type: String, default: "", trim: true },
         penteado: { type: String, default: "", trim: true },
         maquilhagem: { type: String, default: "", trim: true },
-        observacoes: { type: String, default: "", trim: true }
+        observacoes: { type: String, default: "", trim: true },
+        comunicados: { type: [comunicadoSchema], default: [] }
     },
     { timestamps: true }
 );
