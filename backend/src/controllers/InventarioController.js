@@ -89,6 +89,30 @@ class InventarioController {
         }
     }
 
+    async sugerirData(req, res) {
+        try {
+            const item = await this.inventarioRepository.buscarPorId(req.params.id);
+            if (!item) return res.status(404).json({ erro: "Item não encontrado." });
+
+            const requisicao = item.requisicoes.id(req.params.requisicaoId);
+            if (!requisicao) return res.status(404).json({ erro: "Requisição não encontrada." });
+
+            if (requisicao.estado !== "PENDENTE") {
+                return res.status(400).json({ erro: "Esta requisição já foi tratada." });
+            }
+
+            const itemAtualizado = await this.inventarioRepository.sugerirData(req.params.id, req.params.requisicaoId, {
+                dataSugeridaInicio: req.body.dataSugeridaInicio || null,
+                dataSugeridaFim: req.body.dataSugeridaFim || null,
+                mensagemResposta: req.body.mensagemResposta || ""
+            });
+
+            res.status(200).json({ mensagem: "Sugestão de data enviada com sucesso.", item: itemAtualizado });
+        } catch (erro) {
+            res.status(400).json({ erro: erro.message });
+        }
+    }
+
     async editarAnuncio(req, res) {
         try {
             const itemAtualizado = await this.inventarioRepository.atualizar(req.params.id, this.prepararDadosItem(req));

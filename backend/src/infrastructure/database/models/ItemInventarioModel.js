@@ -8,6 +8,9 @@ const requisicaoSchema = new mongoose.Schema(
         mensagem: { type: String, default: "" },
         dataInicio: { type: Date, default: null },
         dataFim: { type: Date, default: null },
+        dataSugeridaInicio: { type: Date, default: null },
+        dataSugeridaFim: { type: Date, default: null },
+        mensagemResposta: { type: String, default: "", trim: true },
         estado: { type: String, enum: ["PENDENTE", "ACEITE", "REJEITADA"], default: "PENDENTE" },
         dataRequisicao: { type: Date, default: Date.now }
     },
@@ -34,6 +37,8 @@ const itemInventarioSchema = new mongoose.Schema(
         origem: { type: String, enum: ["ESCOLA", "ENCARREGADO", "ALUNO"], default: "ENCARREGADO" },
         dataInicioDisponibilidade: { type: Date, default: null },
         dataFimDisponibilidade: { type: Date, default: null },
+        alugadoDesde: { type: Date, default: null },
+        alugadoAte: { type: Date, default: null },
         imagemUrl: { type: String, default: "", trim: true },
         estadoAnuncio: {
             type: String,

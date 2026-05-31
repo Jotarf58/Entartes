@@ -266,8 +266,8 @@ export default function App() {
             </button>
 
             <div>
-              <p className="text-sm text-[#7a9a8c]">Ent’artes</p>
-              <h2 className="text-[#2d5f4f]">Gestão escolar</h2>
+              <p className="text-sm text-[#7a9a8c]">Bem-vindo</p>
+              <h2 className="text-[#2d5f4f]">{loggedUser.name}</h2>
             </div>
           </div>
 

@@ -22,6 +22,9 @@ export type RequisicaoBackend = {
   mensagem?: string;
   dataInicio?: string;
   dataFim?: string;
+  dataSugeridaInicio?: string;
+  dataSugeridaFim?: string;
+  mensagemResposta?: string;
   estado: EstadoRequisicaoBackend;
   dataRequisicao?: string;
 };
@@ -38,6 +41,9 @@ export type ItemInventarioBackend = {
   utilizadorId: string;
   origem?: OrigemInventarioBackend;
   estadoAnuncio: EstadoAnuncioBackend;
+  imagemUrl?: string;
+  alugadoDesde?: string | null;
+  alugadoAte?: string | null;
   requisicoes?: RequisicaoBackend[];
   createdAt?: string;
   updatedAt?: string;
@@ -67,6 +73,8 @@ export type MarketplaceItemApp = {
   imagemUrl: string;
   dataInicioDisponibilidade: string;
   dataFimDisponibilidade: string;
+  alugadoDesde: string;
+  alugadoAte: string;
   utilizadorId: string;
   requisicoes: RequisicaoBackend[];
 };
@@ -79,6 +87,7 @@ export type CriarItemInventarioInput = {
   preco: number;
   utilizadorId: string;
   origem?: OrigemInventarioBackend;
+  imagemUrl?: string;
 };
 
 export type EditarItemInventarioInput = {
@@ -88,6 +97,14 @@ export type EditarItemInventarioInput = {
   tipoTransacao: TipoTransacaoBackend;
   preco: number;
   taxaSimbolica?: number;
+  imagemUrl?: string;
+  estadoAnuncio?: EstadoAnuncioBackend;
+};
+
+export type SugerirDataRequisicaoInput = {
+  dataSugeridaInicio?: string;
+  dataSugeridaFim?: string;
+  mensagemResposta?: string;
 };
 
 export type RequisitarItemInput = {
@@ -148,9 +165,11 @@ export function adaptarItemInventarioBackend(
     origem: item.origem ?? 'ENCARREGADO',
     estadoAnuncio: item.estadoAnuncio,
     preco: item.preco ?? item.taxaSimbolica ?? 0,
-    imagemUrl: '',
+    imagemUrl: item.imagemUrl ?? '',
     dataInicioDisponibilidade: dataCriacao,
     dataFimDisponibilidade: '',
+    alugadoDesde: item.alugadoDesde?.slice(0, 10) ?? '',
+    alugadoAte: item.alugadoAte?.slice(0, 10) ?? '',
     utilizadorId: item.utilizadorId,
     requisicoes: item.requisicoes ?? [],
   };
@@ -174,6 +193,7 @@ export async function criarItemInventario(input: CriarItemInventarioInput) {
       taxaSimbolica: input.preco,
       utilizadorId: input.utilizadorId,
       origem: input.origem ?? 'ENCARREGADO',
+      imagemUrl: input.imagemUrl ?? '',
     }
   );
 
@@ -193,6 +213,8 @@ export async function editarItemInventario(
       tipoTransacao: input.tipoTransacao,
       preco: input.preco,
       taxaSimbolica: input.taxaSimbolica ?? input.preco,
+      ...(input.imagemUrl !== undefined ? { imagemUrl: input.imagemUrl } : {}),
+      ...(input.estadoAnuncio ? { estadoAnuncio: input.estadoAnuncio } : {}),
     }
   );
 
@@ -242,6 +264,23 @@ export async function rejeitarRequisicaoInventario(
 ) {
   const response = await api.patch<InventarioMutationResponse>(
     `/inventario/${itemId}/requisicoes/${requisicaoId}/rejeitar`
+  );
+
+  return adaptarItemInventarioBackend(response.item);
+}
+
+export async function sugerirDataRequisicaoInventario(
+  itemId: string,
+  requisicaoId: string,
+  input: SugerirDataRequisicaoInput
+) {
+  const response = await api.patch<InventarioMutationResponse>(
+    `/inventario/${itemId}/requisicoes/${requisicaoId}/sugerir`,
+    {
+      dataSugeridaInicio: input.dataSugeridaInicio || null,
+      dataSugeridaFim: input.dataSugeridaFim || null,
+      mensagemResposta: input.mensagemResposta ?? '',
+    }
   );
 
   return adaptarItemInventarioBackend(response.item);

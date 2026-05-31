@@ -26,7 +26,11 @@ class AceitarRequisicaoItem {
 
         const itemAtualizado = await this.inventarioRepository.aceitarRequisicao(
             itemId,
-            requisicaoId
+            requisicaoId,
+            {
+                dataInicio: requisicao.dataSugeridaInicio || requisicao.dataInicio || null,
+                dataFim: requisicao.dataSugeridaFim || requisicao.dataFim || null
+            }
         );
 
         console.log("Email fake: requisição aceite para o item", item.titulo);

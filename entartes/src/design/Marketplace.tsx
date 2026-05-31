@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   Calendar,
   CheckCircle2,
@@ -26,6 +26,7 @@ import {
   listarInventario,
   rejeitarRequisicaoInventario,
   requisitarItemInventario,
+  sugerirDataRequisicaoInventario,
   type MarketplaceItemApp,
   type OrigemInventarioBackend,
   type RequisicaoBackend,
@@ -211,7 +212,6 @@ function criarDescricaoBackend(formItem: FormItem) {
     `tipo=${formItem.tipo}`,
     `modalidade=${formItem.modalidade}`,
     `tamanho=${formItem.tamanho}`,
-    `imagemUrl=${formItem.imagemUrl}`,
     `inicio=${formItem.dataInicioDisponibilidade}`,
     `fim=${formItem.dataFimDisponibilidade}`,
     `origemNome=${formItem.origemNome}`,
@@ -247,6 +247,8 @@ function criarItensMock(): MarketplaceItem[] {
     ...item,
     imagemUrl: item.imagemUrl ?? '',
     estadoAnuncio: 'ATIVO',
+    alugadoDesde: '',
+    alugadoAte: '',
     utilizadorId: 'mock',
     origemNome: item.origem ?? 'Família Ent’artes',
     contactoEmail: 'geral@entartes.pt',
@@ -280,6 +282,13 @@ function isMongoObjectId(value: string) {
   return /^[a-f\d]{24}$/i.test(value.trim());
 }
 
+function getOrigemLabelParaRole(role: UserRole) {
+  if (role === 'COORDENACAO' || role === 'PROFESSOR') return 'Escola';
+  if (role === 'ALUNO') return 'Aluno';
+
+  return 'Encarregado';
+}
+
 function getOrigemComNome(
   item: MarketplaceItem,
   currentUser?: CurrentUser,
@@ -289,22 +298,22 @@ function getOrigemComNome(
   const itemDoUtilizadorAtual = currentUserIds.filter(Boolean).includes(item.utilizadorId);
 
   if (itemDoUtilizadorAtual && currentUser?.name) {
-    return `${item.origem} — ${currentUser.name}`;
+    return `${getOrigemLabelParaRole(currentUser.role)} — ${currentUser.name}`;
   }
 
   if (nome && !isMongoObjectId(nome)) {
-    return `${item.origem} — ${nome}`;
+    return nome;
   }
 
-  if (item.origem === 'ESCOLA') {
+  if (item.origem === 'ESCOLA' || item.origem === 'Escola') {
     return 'Escola — Ent’Artes';
   }
 
-  if (item.origem === 'ENCARREGADO') {
+  if (item.origem === 'ENCARREGADO' || item.origem === 'Encarregado') {
     return 'Encarregado responsável';
   }
 
-  if (item.origem === 'ALUNO') {
+  if (item.origem === 'ALUNO' || item.origem === 'Aluno') {
     return 'Aluno responsável';
   }
 
@@ -329,10 +338,6 @@ function getTaxaAluguer(item: MarketplaceItem) {
   return `${item.preco}€ / período de aluguer`;
 }
 
-function anuncioEstaDisponivel(item: MarketplaceItem) {
-  return item.estadoAnuncio === 'ATIVO' || item.estadoAnuncio === 'PUBLICADO';
-}
-
 function getRequisicaoNome(requisicao: RequisicaoBackend) {
   const nome = requisicao.perfilNome?.trim();
 
@@ -353,6 +358,32 @@ function getPeriodoRequisicao(requisicao: RequisicaoBackend) {
 
 function contarRequisicoesPendentes(item: MarketplaceItem) {
   return item.requisicoes.filter((requisicao) => requisicao.estado === 'PENDENTE').length;
+}
+
+function getDataSugerida(requisicao: RequisicaoBackend) {
+  if (!requisicao.dataSugeridaInicio && !requisicao.dataSugeridaFim) {
+    return '';
+  }
+
+  return `${formatDate(requisicao.dataSugeridaInicio ?? '')} a ${formatDate(
+    requisicao.dataSugeridaFim ?? ''
+  )}`;
+}
+
+function itemAlugado(item: MarketplaceItem) {
+  return item.estadoAnuncio === 'RESERVADO';
+}
+
+function getEstadoDisponibilidade(item: MarketplaceItem) {
+  if (itemAlugado(item) && item.alugadoAte) {
+    return `Alugado até ${formatDate(item.alugadoAte)}`;
+  }
+
+  if (item.estadoAnuncio === 'ATIVO' || item.estadoAnuncio === 'PUBLICADO') {
+    return 'Disponível';
+  }
+
+  return estadoAnuncioLabels[item.estadoAnuncio] ?? item.estadoAnuncio;
 }
 
 export default function Marketplace({ currentUser }: { currentUser: CurrentUser }) {
@@ -404,6 +435,12 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
   const [aluguerFim, setAluguerFim] = useState('');
   const [importarEscolaId, setImportarEscolaId] = useState('');
 
+  const [itemSugestao, setItemSugestao] = useState<MarketplaceItem | null>(null);
+  const [requisicaoSugestao, setRequisicaoSugestao] = useState<RequisicaoBackend | null>(null);
+  const [sugestaoInicio, setSugestaoInicio] = useState('');
+  const [sugestaoFim, setSugestaoFim] = useState('');
+  const [sugestaoMensagem, setSugestaoMensagem] = useState('');
+
   const itensEscola = useMemo(
     () => itens.filter((item) => item.origem === 'ESCOLA' || item.origem === 'Escola'),
     [itens]
@@ -437,8 +474,23 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
     void carregarInventario();
   }, []);
 
+  const ehMeuAnuncio = useCallback(
+    (item: MarketplaceItem) => {
+      const donoPorId = currentUserIds.includes(item.utilizadorId);
+      const donoPorNome = item.origemNome === currentUser.name;
+      const donoPorEmail = Boolean(currentUser.email) && item.contactoEmail === currentUser.email;
+
+      return donoPorId || donoPorNome || donoPorEmail;
+    },
+    [currentUserIds, currentUser.name, currentUser.email]
+  );
+
   const itensFiltrados = useMemo(() => {
     return itens.filter((item) => {
+      if (ehMeuAnuncio(item)) {
+        return false;
+      }
+
       const pesquisaNormalizada = pesquisa.trim().toLowerCase();
 
       const correspondePesquisa =
@@ -457,17 +509,11 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
 
       return correspondePesquisa && correspondeTipo && correspondeModalidade;
     });
-  }, [itens, pesquisa, tipoFiltro, modalidadeFiltro]);
+  }, [itens, pesquisa, tipoFiltro, modalidadeFiltro, ehMeuAnuncio]);
 
   const meusAnuncios = useMemo(() => {
-    return itens.filter((item) => {
-      const donoPorId = currentUserIds.includes(item.utilizadorId);
-      const donoPorNome = item.origemNome === currentUser.name;
-      const donoPorEmail = Boolean(currentUser.email) && item.contactoEmail === currentUser.email;
-
-      return donoPorId || donoPorNome || donoPorEmail;
-    });
-  }, [itens, currentUserIds, currentUser.name, currentUser.email]);
+    return itens.filter((item) => ehMeuAnuncio(item));
+  }, [itens, ehMeuAnuncio]);
 
   const totalFigurinos = itens.filter((item) => item.tipo === 'FIGURINO').length;
   const totalAcessorios = itens.filter((item) => item.tipo === 'ACESSORIO').length;
@@ -556,6 +602,7 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
           tipoTransacao: 'ALUGAR',
           preco: precoNumerico,
           taxaSimbolica: precoNumerico,
+          imagemUrl: formItem.imagemUrl,
         });
 
         const itemNormalizado = normalizarItemBackend(itemAtualizado);
@@ -598,6 +645,7 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
         preco: precoNumerico,
         utilizadorId: currentUserId,
         origem: getOrigemBackend(currentUser.role),
+        imagemUrl: formItem.imagemUrl,
       });
 
       setItens((atuais) => [
@@ -773,50 +821,74 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
   }
 
 
-  async function alternarDisponibilidade(item: MarketplaceItem) {
-    const novoEstado = anuncioEstaDisponivel(item) ? 'INATIVO' : 'ATIVO';
+  function handleUploadImagem(file: File | undefined) {
+    if (!file) return;
+
+    if (file.size > 1.5 * 1024 * 1024) {
+      setMensagemSucesso('A imagem é demasiado grande (máx. 1.5 MB).');
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        atualizarForm('imagemUrl', reader.result);
+      }
+    };
+
+    reader.readAsDataURL(file);
+  }
+
+  function abrirSugestao(item: MarketplaceItem, requisicao: RequisicaoBackend) {
+    setItemSugestao(item);
+    setRequisicaoSugestao(requisicao);
+    setSugestaoInicio(requisicao.dataInicio ?? item.dataInicioDisponibilidade ?? '');
+    setSugestaoFim(requisicao.dataFim ?? item.dataFimDisponibilidade ?? '');
+    setSugestaoMensagem('');
+    setMensagemSucesso('');
+  }
+
+  function fecharSugestao() {
+    setItemSugestao(null);
+    setRequisicaoSugestao(null);
+    setSugestaoInicio('');
+    setSugestaoFim('');
+    setSugestaoMensagem('');
+  }
+
+  async function confirmarSugestao() {
+    if (!itemSugestao || !requisicaoSugestao) return;
+
+    if (!sugestaoInicio || !sugestaoFim) {
+      setMensagemSucesso('Indica as novas datas a sugerir.');
+      return;
+    }
+
+    if (sugestaoInicio > sugestaoFim) {
+      setMensagemSucesso('A data de início não pode ser posterior à data de fim.');
+      return;
+    }
+
+    const requisicaoId = getRequisicaoId(requisicaoSugestao);
+
+    if (!requisicaoId) {
+      setMensagemSucesso('Não foi possível identificar a requisição.');
+      return;
+    }
 
     try {
       setIsSaving(true);
-      setMensagemSucesso('');
 
-      const itemAtualizado = await editarItemInventario(
-        item.id,
-        {
-          titulo: item.nome,
-          descricao: criarDescricaoBackend({
-            nome: item.nome,
-            descricao: item.descricao,
-            tipo: item.tipo,
-            modalidade: item.modalidade,
-            tamanho: item.tamanho,
-            estadoConservacao: item.estadoConservacao,
-            origem: item.origem,
-            dataInicioDisponibilidade: item.dataInicioDisponibilidade,
-            dataFimDisponibilidade: item.dataFimDisponibilidade,
-            preco: String(item.preco),
-            imagemUrl: item.imagemUrl,
-            origemNome: item.origemNome,
-            contactoEmail: item.contactoEmail,
-            contactoTelefone: item.contactoTelefone,
-          }),
-          estadoConservacao: item.estadoConservacao,
-          tipoTransacao: 'ALUGAR',
-          preco: item.preco,
-          taxaSimbolica: item.preco,
-          estadoAnuncio: novoEstado,
-        } as Parameters<typeof editarItemInventario>[1] & { estadoAnuncio: string }
-      );
-
-      atualizarItemNaLista({
-        ...normalizarItemBackend(itemAtualizado),
-        estadoAnuncio: novoEstado,
+      const itemAtualizado = await sugerirDataRequisicaoInventario(itemSugestao.id, requisicaoId, {
+        dataSugeridaInicio: sugestaoInicio,
+        dataSugeridaFim: sugestaoFim,
+        mensagemResposta: sugestaoMensagem,
       });
-      setMensagemSucesso(
-        novoEstado === 'ATIVO'
-          ? 'Anúncio marcado como disponível.'
-          : 'Anúncio marcado como indisponível.'
-      );
+
+      atualizarItemNaLista(normalizarItemBackend(itemAtualizado));
+      setMensagemSucesso('Sugestão de nova data enviada ao interessado.');
+      fecharSugestao();
     } catch (error) {
       setMensagemSucesso(getErrorMessage(error));
     } finally {
@@ -984,7 +1056,8 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
             <div>
               <h2 className="text-[#2d5f4f]">Meus anúncios</h2>
               <p className="text-sm text-[#7a9a8c]">
-                Gere rapidamente os teus anúncios e muda entre disponível/indisponível sem criar um novo.
+                Gere os teus anúncios e os pedidos de aluguer recebidos. A disponibilidade é automática:
+                o item fica indisponível enquanto está alugado e volta a ficar disponível no fim do período.
               </p>
             </div>
 
@@ -1014,15 +1087,21 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
                       <p className="text-xs text-[#7a9a8c]">{tipoLabels[item.tipo]} · {item.modalidade}</p>
                     </div>
 
-                    <span className="px-3 py-1 rounded-full bg-white border border-[#e8f0ed] text-[#5a7a6c] text-xs">
-                      {estadoAnuncioLabels[item.estadoAnuncio] ?? item.estadoAnuncio}
+                    <span
+                      className={`px-3 py-1 rounded-full text-xs ${
+                        itemAlugado(item)
+                          ? 'bg-[#fff4d4] text-[#8a6d1d]'
+                          : 'bg-[#d4e8df] text-[#2d5f4f]'
+                      }`}
+                    >
+                      {getEstadoDisponibilidade(item)}
                     </span>
                   </div>
 
                   <div className="space-y-2 mb-4">
                     <InfoLine label="Origem" value={getOrigemComNome(item, currentUser, currentUserIds)} />
                     <InfoLine label="Contacto" value={getContactoItem(item)} />
-                    <InfoLine label="Aluguer" value={getPeriodoAluguer(item)} />
+                    <InfoLine label="Disponível" value={getPeriodoAluguer(item)} />
                     <InfoLine label="Taxa" value={getTaxaAluguer(item)} />
                   </div>
 
@@ -1032,14 +1111,6 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
                       className="px-4 py-2 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] transition-colors"
                     >
                       Editar
-                    </button>
-
-                    <button
-                      onClick={() => void alternarDisponibilidade(item)}
-                      disabled={isSaving || item.estadoAnuncio === 'ENCERRADO'}
-                      className="px-4 py-2 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-white transition-colors disabled:opacity-60"
-                    >
-                      {anuncioEstaDisponivel(item) ? 'Indisponível' : 'Disponível'}
                     </button>
                   </div>
 
@@ -1065,9 +1136,13 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
                                 <p className="text-sm text-[#2d5f4f] truncate">
                                   {getRequisicaoNome(requisicao)}
                                 </p>
-                                {getPeriodoRequisicao(requisicao) && (
-                                  <p className="text-xs text-[#7a9a8c]">
-                                    {getPeriodoRequisicao(requisicao)}
+                                <p className="text-xs text-[#7a9a8c]">
+                                  Datas pretendidas:{' '}
+                                  {getPeriodoRequisicao(requisicao) || 'não indicadas'}
+                                </p>
+                                {getDataSugerida(requisicao) && (
+                                  <p className="text-xs text-[#8a6d1d]">
+                                    Sugerido: {getDataSugerida(requisicao)}
                                   </p>
                                 )}
                                 <p className="text-xs text-[#7a9a8c]">
@@ -1076,12 +1151,19 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
                               </div>
 
                               {requisicao.estado === 'PENDENTE' && (
-                                <div className="flex gap-1">
+                                <div className="flex flex-col gap-1">
                                   <button
                                     onClick={() => aceitarRequisicao(item, requisicao)}
                                     className="px-2 py-1 rounded-lg bg-[#2d5f4f] text-white text-xs hover:bg-[#244c40]"
                                   >
                                     Aceitar
+                                  </button>
+
+                                  <button
+                                    onClick={() => abrirSugestao(item, requisicao)}
+                                    className="px-2 py-1 rounded-lg border border-[#d9e8e1] text-[#2d5f4f] text-xs hover:bg-[#f0f6f3]"
+                                  >
+                                    Sugerir data
                                   </button>
 
                                   <button
@@ -1155,8 +1237,14 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
                         {tipoLabels[item.tipo]}
                       </span>
 
-                      <span className="px-3 py-1 rounded-full bg-[#f0f6f3] text-[#5a7a6c] text-xs whitespace-nowrap">
-                        {estadoAnuncioLabels[item.estadoAnuncio] ?? item.estadoAnuncio}
+                      <span
+                        className={`px-3 py-1 rounded-full text-xs whitespace-nowrap ${
+                          itemAlugado(item)
+                            ? 'bg-[#fff4d4] text-[#8a6d1d]'
+                            : 'bg-[#f0f6f3] text-[#5a7a6c]'
+                        }`}
+                      >
+                        {getEstadoDisponibilidade(item)}
                       </span>
                     </div>
                   </div>
@@ -1204,16 +1292,6 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
                         className="px-4 py-2 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-[#f0f6f3] transition-colors"
                       >
                         Ver detalhes
-                      </button>
-                    )}
-
-                    {(donoDoItem || isCoordenacao) && (
-                      <button
-                        onClick={() => void alternarDisponibilidade(item)}
-                        disabled={isSaving || item.estadoAnuncio === 'ENCERRADO'}
-                        className="px-4 py-2 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-[#f0f6f3] transition-colors disabled:opacity-60"
-                      >
-                        {anuncioEstaDisponivel(item) ? 'Marcar indisponível' : 'Marcar disponível'}
                       </button>
                     )}
 
@@ -1414,14 +1492,39 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
               />
             </FormField>
 
-            <FormField label="URL da imagem">
+            <FormField label="Imagem (URL ou carregar ficheiro)">
               <input
-                value={formItem.imagemUrl}
+                value={formItem.imagemUrl.startsWith('data:') ? '' : formItem.imagemUrl}
                 onChange={(event) => atualizarForm('imagemUrl', event.target.value)}
                 className="inputEntartes"
                 placeholder="https://..."
               />
+
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(event) => handleUploadImagem(event.target.files?.[0])}
+                className="mt-2 block w-full text-sm text-[#5a7a6c] file:mr-3 file:rounded-lg file:border-0 file:bg-[#d4e8df] file:px-4 file:py-2 file:text-[#2d5f4f]"
+              />
             </FormField>
+
+            <div className="md:col-span-2 flex items-center gap-4">
+              {formItem.imagemUrl ? (
+                <img
+                  src={formItem.imagemUrl}
+                  alt="Pré-visualização"
+                  className="w-24 h-24 rounded-xl object-cover border border-[#e8f0ed]"
+                />
+              ) : (
+                <div className="w-24 h-24 rounded-xl border border-dashed border-[#d9e8e1] flex items-center justify-center text-[#7a9a8c]">
+                  <ImageIcon className="w-6 h-6" />
+                </div>
+              )}
+
+              <p className="text-xs text-[#7a9a8c]">
+                Cola um URL ou carrega uma imagem do dispositivo (máx. 1.5 MB). A imagem fica guardada no anúncio.
+              </p>
+            </div>
 
             <div className="md:col-span-2">
               <FormField label="Descrição">
@@ -1630,6 +1733,83 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
               className="px-5 py-3 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] transition-colors disabled:opacity-70"
             >
               {isSaving ? 'A enviar...' : 'Enviar pedido de aluguer'}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {itemSugestao && requisicaoSugestao && (
+        <Modal onClose={fecharSugestao}>
+          <div className="flex items-start justify-between gap-4 mb-6">
+            <div>
+              <h2 className="text-[#2d5f4f] mb-1">Sugerir outra data</h2>
+              <p className="text-sm text-[#7a9a8c]">
+                {itemSugestao.nome} · pedido de {getRequisicaoNome(requisicaoSugestao)}
+              </p>
+            </div>
+
+            <button
+              onClick={fecharSugestao}
+              className="p-2 rounded-lg hover:bg-[#f0f6f3]"
+              aria-label="Fechar"
+            >
+              <X className="w-5 h-5 text-[#2d5f4f]" />
+            </button>
+          </div>
+
+          <div className="rounded-xl bg-[#f8faf9] border border-[#e8f0ed] p-4 mb-5">
+            <p className="text-sm text-[#5a7a6c]">
+              Datas pretendidas pelo interessado:{' '}
+              {getPeriodoRequisicao(requisicaoSugestao) || 'não indicadas'}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <FormField label="Nova data de início">
+              <input
+                value={sugestaoInicio}
+                onChange={(event) => setSugestaoInicio(event.target.value)}
+                type="date"
+                className="inputEntartes"
+              />
+            </FormField>
+
+            <FormField label="Nova data de fim">
+              <input
+                value={sugestaoFim}
+                onChange={(event) => setSugestaoFim(event.target.value)}
+                type="date"
+                min={sugestaoInicio || undefined}
+                className="inputEntartes"
+              />
+            </FormField>
+
+            <div className="md:col-span-2">
+              <FormField label="Mensagem (opcional)">
+                <textarea
+                  value={sugestaoMensagem}
+                  onChange={(event) => setSugestaoMensagem(event.target.value)}
+                  className="inputEntartes min-h-24 resize-none"
+                  placeholder="Ex.: Nessas datas o item está livre, podes confirmar?"
+                />
+              </FormField>
+            </div>
+          </div>
+
+          <div className="flex flex-col-reverse md:flex-row md:items-center md:justify-end gap-3 mt-6">
+            <button
+              onClick={fecharSugestao}
+              className="px-5 py-3 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-[#f0f6f3] transition-colors"
+            >
+              Cancelar
+            </button>
+
+            <button
+              onClick={() => void confirmarSugestao()}
+              disabled={isSaving}
+              className="px-5 py-3 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] transition-colors disabled:opacity-70"
+            >
+              {isSaving ? 'A enviar...' : 'Enviar sugestão'}
             </button>
           </div>
         </Modal>

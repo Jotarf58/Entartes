@@ -29,6 +29,11 @@ class InventarioRepository {
     }
 
     async listarTodos(filtros = {}) {
+        await ItemInventarioModel.updateMany(
+            { estadoAnuncio: "RESERVADO", alugadoAte: { $ne: null, $lt: new Date() } },
+            { $set: { estadoAnuncio: "ATIVO", alugadoDesde: null, alugadoAte: null } }
+        );
+
         const query = {};
         if (filtros.tipo && filtros.tipo !== "TODOS") query.tipo = filtros.tipo;
         if (filtros.modalidade && filtros.modalidade !== "TODAS") query.modalidade = filtros.modalidade;
@@ -76,15 +81,32 @@ class InventarioRepository {
         );
     }
 
-    async aceitarRequisicao(itemId, requisicaoId) {
+    async aceitarRequisicao(itemId, requisicaoId, janela = {}) {
+        const set = {
+            "requisicoes.$.estado": "ACEITE",
+            estadoAnuncio: "RESERVADO"
+        };
+
+        if (janela.dataInicio) set.alugadoDesde = janela.dataInicio;
+        if (janela.dataFim) set.alugadoAte = janela.dataFim;
+
         return await ItemInventarioModel.findOneAndUpdate(
             { _id: itemId, "requisicoes._id": requisicaoId },
-            {
-                $set: {
-                    "requisicoes.$.estado": "ACEITE",
-                    estadoAnuncio: "RESERVADO"
-                }
-            },
+            { $set: set },
+            { new: true }
+        );
+    }
+
+    async sugerirData(itemId, requisicaoId, dados) {
+        const set = {};
+
+        if (dados.dataSugeridaInicio) set["requisicoes.$.dataSugeridaInicio"] = dados.dataSugeridaInicio;
+        if (dados.dataSugeridaFim) set["requisicoes.$.dataSugeridaFim"] = dados.dataSugeridaFim;
+        if (typeof dados.mensagemResposta === "string") set["requisicoes.$.mensagemResposta"] = dados.mensagemResposta;
+
+        return await ItemInventarioModel.findOneAndUpdate(
+            { _id: itemId, "requisicoes._id": requisicaoId },
+            { $set: set },
             { new: true }
         );
     }
