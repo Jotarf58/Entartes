@@ -89,6 +89,33 @@ class InventarioController {
         }
     }
 
+    async aceitarSugestao(req, res) {
+        try {
+            const item = await this.inventarioRepository.buscarPorId(req.params.id);
+            if (!item) return res.status(404).json({ erro: "Item não encontrado." });
+
+            const requisicao = item.requisicoes.id(req.params.requisicaoId);
+            if (!requisicao) return res.status(404).json({ erro: "Requisição não encontrada." });
+
+            if (!requisicao.dataSugeridaInicio && !requisicao.dataSugeridaFim) {
+                return res.status(400).json({ erro: "Não existe nenhuma sugestão de data para aceitar." });
+            }
+
+            const itemAtualizado = await this.inventarioRepository.aceitarSugestaoRequisicao(
+                req.params.id,
+                req.params.requisicaoId,
+                {
+                    dataInicio: requisicao.dataSugeridaInicio || requisicao.dataInicio || null,
+                    dataFim: requisicao.dataSugeridaFim || requisicao.dataFim || null
+                }
+            );
+
+            res.status(200).json({ mensagem: "Nova data aceite com sucesso.", item: itemAtualizado });
+        } catch (erro) {
+            res.status(400).json({ erro: erro.message });
+        }
+    }
+
     async sugerirData(req, res) {
         try {
             const item = await this.inventarioRepository.buscarPorId(req.params.id);

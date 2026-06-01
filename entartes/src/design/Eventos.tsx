@@ -301,8 +301,6 @@ export default function Eventos({ currentUser }: { currentUser: CurrentUser }) {
   const [eventoForm, setEventoForm] = useState<EventoForm>(criarEventoFormVazio());
 
   const [eventoComunicado, setEventoComunicado] = useState<EventoView | null>(null);
-  const [eventoAutorizacao, setEventoAutorizacao] = useState<EventoView | null>(null);
-  const [autorizacoesConfirmadas, setAutorizacoesConfirmadas] = useState<string[]>([]);
 
   const [eventoThreadId, setEventoThreadId] = useState<string | null>(null);
   const [novoComunicado, setNovoComunicado] = useState('');
@@ -553,15 +551,6 @@ export default function Eventos({ currentUser }: { currentUser: CurrentUser }) {
     setMensagem(`Formulário aberto para "${evento.titulo}".`);
   }
 
-  function confirmarAutorizacao(evento: EventoView) {
-    setAutorizacoesConfirmadas((atuais) =>
-      atuais.includes(evento.id) ? atuais : [...atuais, evento.id]
-    );
-
-    setEventoAutorizacao(null);
-    setMensagem(`Autorização confirmada para "${evento.titulo}".`);
-  }
-
   async function alterarEstadoEvento(eventoId: string, estado: EstadoEvento) {
     try {
       setOperacaoEmCurso(true);
@@ -759,8 +748,6 @@ export default function Eventos({ currentUser }: { currentUser: CurrentUser }) {
       ) : (
         <div className="space-y-6">
           {eventosFiltrados.map((evento) => {
-            const autorizado = autorizacoesConfirmadas.includes(evento.id);
-
             return (
               <article
                 key={evento.id}
@@ -784,12 +771,6 @@ export default function Eventos({ currentUser }: { currentUser: CurrentUser }) {
                       {evento.figurino.length > 0 && (
                         <span className="px-3 py-1 rounded-full bg-[#e8d4ff] text-[#5a3c7a] text-xs">
                           Figurino
-                        </span>
-                      )}
-
-                      {autorizado && (
-                        <span className="px-3 py-1 rounded-full bg-[#d4e8df] text-[#2d5f4f] text-xs">
-                          Autorizado
                         </span>
                       )}
                     </div>
@@ -821,15 +802,6 @@ export default function Eventos({ currentUser }: { currentUser: CurrentUser }) {
                         className="px-4 py-2 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-[#f0f6f3] transition-colors"
                       >
                         Ver comunicado
-                      </button>
-                    )}
-
-                    {isEncarregado && (
-                      <button
-                        onClick={() => setEventoAutorizacao(evento)}
-                        className="px-4 py-2 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] transition-colors"
-                      >
-                        {autorizado ? 'Autorizado' : 'Ver autorizações'}
                       </button>
                     )}
 
@@ -1109,52 +1081,6 @@ export default function Eventos({ currentUser }: { currentUser: CurrentUser }) {
               items={eventoComunicado.figurino}
               emptyText="Sem indicações de figurino."
             />
-          </div>
-        </Modal>
-      )}
-
-      {eventoAutorizacao && (
-        <Modal onClose={() => setEventoAutorizacao(null)}>
-          <ModalHeader
-            title={eventoAutorizacao.titulo}
-            subtitle="Autorizações e confirmação do encarregado"
-            onClose={() => setEventoAutorizacao(null)}
-          />
-
-          <div className="space-y-5">
-            <div className="rounded-xl bg-[#fff9f0] border border-[#ffe4b8] p-4">
-              <p className="text-[#2d5f4f] mb-2">Confirmação necessária</p>
-              <p className="text-sm text-[#7a9a8c]">
-                Ao confirmar, o encarregado declara que tomou conhecimento do comunicado,
-                das indicações de figurino e das condições associadas ao evento.
-              </p>
-            </div>
-
-            <InfoBlock
-              icon={<CalendarDays className="w-4 h-4 text-[#2d5f4f]" />}
-              label="Evento"
-              value={`${formatDate(eventoAutorizacao.data)} · ${eventoAutorizacao.local}`}
-            />
-
-            {eventoAutorizacao.formularioUrl && (
-              <button
-                onClick={() => abrirFormulario(eventoAutorizacao)}
-                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-[#f0f6f3] transition-colors"
-              >
-                <ExternalLink className="w-4 h-4" />
-                Abrir formulário associado
-              </button>
-            )}
-
-            <button
-              onClick={() => confirmarAutorizacao(eventoAutorizacao)}
-              disabled={autorizacoesConfirmadas.includes(eventoAutorizacao.id)}
-              className="w-full px-5 py-3 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] transition-colors disabled:bg-[#d4e8df] disabled:text-[#2d5f4f]"
-            >
-              {autorizacoesConfirmadas.includes(eventoAutorizacao.id)
-                ? 'Autorização já confirmada'
-                : 'Confirmar autorização'}
-            </button>
           </div>
         </Modal>
       )}

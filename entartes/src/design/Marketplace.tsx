@@ -18,9 +18,11 @@ import {
   limparMensagemBackend,
   type ToastData,
 } from '../components/Toast';
+import { SeletorData } from '../components/Calendario';
 
 import {
   aceitarRequisicaoInventario,
+  aceitarSugestaoRequisicaoInventario,
   criarItemInventario,
   editarItemInventario,
   encerrarItemInventario,
@@ -106,9 +108,9 @@ function criarFormularioVazio(): FormItem {
     modalidade: modalidades[0] ?? 'Ballet',
     tamanho: '',
     estadoConservacao: 'Bom',
-    origem: 'Família',
-    dataInicioDisponibilidade: '2026-01-01',
-    dataFimDisponibilidade: '2026-12-31',
+    origem: '',
+    dataInicioDisponibilidade: '',
+    dataFimDisponibilidade: '',
     preco: '10',
     imagemUrl: '',
     origemNome: '',
@@ -151,7 +153,7 @@ function normalizarTipo(value: string): TipoFigurinoAcessorio {
 }
 
 function getOrigemBackend(role: UserRole): OrigemInventarioBackend {
-  if (role === 'COORDENACAO' || role === 'PROFESSOR') {
+  if (role === 'COORDENACAO') {
     return 'ESCOLA';
   }
 
@@ -269,7 +271,8 @@ function isMongoObjectId(value: string) {
 }
 
 function getOrigemLabelParaRole(role: UserRole) {
-  if (role === 'COORDENACAO' || role === 'PROFESSOR') return 'Escola';
+  if (role === 'COORDENACAO') return 'Escola';
+  if (role === 'PROFESSOR') return 'Professor';
   if (role === 'ALUNO') return 'Aluno';
 
   return 'Encarregado';
@@ -436,6 +439,18 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
   const [sugestaoFim, setSugestaoFim] = useState('');
   const [sugestaoMensagem, setSugestaoMensagem] = useState('');
 
+  const [itemRemover, setItemRemover] = useState<MarketplaceItem | null>(null);
+
+  const minhasRequisicoes = useMemo(() => {
+    if (!isAluno && !isEncarregado) return [] as { item: MarketplaceItem; requisicao: RequisicaoBackend }[];
+
+    return itens.flatMap((item) =>
+      item.requisicoes
+        .filter((requisicao) => requisicao.utilizadorId === currentUserId)
+        .map((requisicao) => ({ item, requisicao }))
+    );
+  }, [itens, isAluno, isEncarregado, currentUserId]);
+
   const itensEscola = useMemo(
     () => itens.filter((item) => item.origem === 'ESCOLA' || item.origem === 'Escola'),
     [itens]
@@ -528,6 +543,7 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
     setImportarEscolaId('');
     setFormItem({
       ...criarFormularioVazio(),
+      origem: getOrigemLabelParaRole(currentUser.role),
       origemNome: currentUser.name,
       contactoEmail: currentUser.email ?? '',
     });
@@ -681,6 +697,13 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
       return;
     }
 
+    const hojeIso = new Date().toISOString().slice(0, 10);
+
+    if (aluguerInicio < hojeIso) {
+      setMensagemSucesso('Não é possível escolher datas no passado.');
+      return;
+    }
+
     const inicioDisponivel = itemAluguer.dataInicioDisponibilidade;
     const fimDisponivel = itemAluguer.dataFimDisponibilidade;
 
@@ -746,26 +769,51 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
     }));
   }
 
-  async function encerrarAnuncioAtual() {
-    if (!itemEditandoId) return;
+  async function confirmarRemocao() {
+    if (!itemRemover) return;
 
-    const deveEncerrar = window.confirm(
-      'Tens a certeza que queres remover/encerrar este anúncio do marketplace?'
-    );
-
-    if (!deveEncerrar) return;
+    const id = itemRemover.id;
 
     try {
       setIsSaving(true);
       setMensagemSucesso('');
 
-      await encerrarItemInventario(itemEditandoId);
+      await encerrarItemInventario(id);
 
-      setItens((atuais) => atuais.filter((item) => item.id !== itemEditandoId));
+      setItens((atuais) => atuais.filter((item) => item.id !== id));
       setDetalheItem(null);
+      setItemRemover(null);
+
+      if (itemEditandoId === id) {
+        fecharModal();
+      }
 
       setMensagemSucesso('Anúncio removido do marketplace.');
-      fecharModal();
+    } catch (error) {
+      setMensagemSucesso(getErrorMessage(error));
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function aceitarSugestaoComoRequisitante(
+    item: MarketplaceItem,
+    requisicao: RequisicaoBackend
+  ) {
+    const requisicaoId = getRequisicaoId(requisicao);
+
+    if (!requisicaoId) {
+      setMensagemSucesso('Não foi possível identificar a requisição.');
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+
+      const itemAtualizado = await aceitarSugestaoRequisicaoInventario(item.id, requisicaoId);
+
+      atualizarItemNaLista(normalizarItemBackend(itemAtualizado));
+      setMensagemSucesso('Aceitaste a nova data sugerida. Aguarda a confirmação do anunciante.');
     } catch (error) {
       setMensagemSucesso(getErrorMessage(error));
     } finally {
@@ -1044,14 +1092,6 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
                 o item fica indisponível enquanto está alugado e volta a ficar disponível no fim do período.
               </p>
             </div>
-
-            <button
-              onClick={abrirModalPublicar}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-[#f0f6f3] transition-colors"
-            >
-              <Upload className="w-4 h-4" />
-              Novo anúncio
-            </button>
           </div>
 
           {meusAnuncios.length === 0 ? (
@@ -1095,6 +1135,13 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
                       className="px-4 py-2 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] transition-colors"
                     >
                       Editar
+                    </button>
+
+                    <button
+                      onClick={() => setItemRemover(item)}
+                      className="px-4 py-2 rounded-xl border border-[#ffd2d2] text-[#9a3a3a] hover:bg-[#fff5f5] transition-colors"
+                    >
+                      Remover
                     </button>
                   </div>
 
@@ -1168,6 +1215,59 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
               ))}
             </div>
           )}
+        </section>
+      )}
+
+      {(isAluno || isEncarregado) && minhasRequisicoes.length > 0 && (
+        <section className="mb-8 bg-white rounded-2xl shadow-sm border border-[#e8f0ed] p-5">
+          <h2 className="text-[#2d5f4f] mb-1">Os meus pedidos de aluguer</h2>
+          <p className="text-sm text-[#7a9a8c] mb-4">
+            Acompanha o estado dos teus pedidos e as datas sugeridas pelo anunciante.
+          </p>
+
+          <div className="space-y-3">
+            {minhasRequisicoes.map(({ item, requisicao }) => (
+              <div
+                key={getRequisicaoId(requisicao)}
+                className="rounded-xl border border-[#e8f0ed] bg-[#f8faf9] p-4"
+              >
+                <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                  <div>
+                    <p className="text-[#2d5f4f]">{item.nome}</p>
+                    <p className="text-xs text-[#7a9a8c]">
+                      Datas pretendidas: {getPeriodoRequisicao(requisicao) || 'não indicadas'}
+                    </p>
+
+                    {getDataSugerida(requisicao) && (
+                      <p className="text-xs text-[#8a6d1d]">
+                        Nova data sugerida: {getDataSugerida(requisicao)}
+                      </p>
+                    )}
+
+                    {requisicao.mensagemResposta && (
+                      <p className="text-sm text-[#5a7a6c] mt-1">
+                        Anunciante: {requisicao.mensagemResposta}
+                      </p>
+                    )}
+
+                    <span className="inline-block mt-2 px-2 py-1 rounded-full bg-white border border-[#e8f0ed] text-xs text-[#5a7a6c]">
+                      {estadoRequisicaoLabels[requisicao.estado] ?? requisicao.estado}
+                    </span>
+                  </div>
+
+                  {getDataSugerida(requisicao) && requisicao.estado === 'PENDENTE' && (
+                    <button
+                      onClick={() => void aceitarSugestaoComoRequisitante(item, requisicao)}
+                      disabled={isSaving}
+                      className="px-4 py-2 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] transition-colors disabled:opacity-60"
+                    >
+                      Aceitar nova data
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
         </section>
       )}
 
@@ -1313,7 +1413,7 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
               </h2>
 
               <p className="text-sm text-[#7a9a8c]">
-                Inclui origem, contactos e o intervalo de aluguer para facilitar a comunicação.
+                A origem e o responsável são preenchidos a partir da tua conta.
               </p>
             </div>
 
@@ -1326,7 +1426,7 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
             </button>
           </div>
 
-          {!modoEdicao && itensEscola.length > 0 && (
+          {!modoEdicao && isCoordenacao && itensEscola.length > 0 && (
             <div className="mb-4 rounded-xl bg-[#f0f6f3] border border-[#d9e8e1] p-4">
               <FormField label="Importar do inventário da escola">
                 <select
@@ -1408,34 +1508,7 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
               />
             </FormField>
 
-            <FormField label="Origem">
-              <input
-                value={formItem.origem}
-                onChange={(event) => atualizarForm('origem', event.target.value)}
-                className="inputEntartes"
-                placeholder="Ex.: Família, Escola, Professor..."
-              />
-            </FormField>
-
-            <FormField label="Nome da origem/responsável">
-              <input
-                value={formItem.origemNome}
-                onChange={(event) => atualizarForm('origemNome', event.target.value)}
-                className="inputEntartes"
-                placeholder="Ex.: João Silva, Diana Sá Carneiro..."
-              />
-            </FormField>
-
-            <FormField label="Email de contacto">
-              <input
-                value={formItem.contactoEmail}
-                onChange={(event) => atualizarForm('contactoEmail', event.target.value)}
-                className="inputEntartes"
-                placeholder="email@exemplo.pt"
-              />
-            </FormField>
-
-            <FormField label="Telefone de contacto">
+            <FormField label="Telefone de contacto (opcional)">
               <input
                 value={formItem.contactoTelefone}
                 onChange={(event) => atualizarForm('contactoTelefone', event.target.value)}
@@ -1445,24 +1518,16 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
             </FormField>
 
             <FormField label="Disponível desde">
-              <input
+              <SeletorData
                 value={formItem.dataInicioDisponibilidade}
-                onChange={(event) =>
-                  atualizarForm('dataInicioDisponibilidade', event.target.value)
-                }
-                type="date"
-                className="inputEntartes"
+                onChange={(valor) => atualizarForm('dataInicioDisponibilidade', valor)}
               />
             </FormField>
 
             <FormField label="Disponível até">
-              <input
+              <SeletorData
                 value={formItem.dataFimDisponibilidade}
-                onChange={(event) =>
-                  atualizarForm('dataFimDisponibilidade', event.target.value)
-                }
-                type="date"
-                className="inputEntartes"
+                onChange={(valor) => atualizarForm('dataFimDisponibilidade', valor)}
               />
             </FormField>
 
@@ -1526,7 +1591,10 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
             <div>
               {modoEdicao && (
                 <button
-                  onClick={encerrarAnuncioAtual}
+                  onClick={() => {
+                    const alvo = itens.find((item) => item.id === itemEditandoId);
+                    if (alvo) setItemRemover(alvo);
+                  }}
                   disabled={isSaving}
                   className="px-5 py-3 rounded-xl border border-[#ffd2d2] text-[#9a3a3a] hover:bg-[#fff5f5] transition-colors disabled:opacity-70"
                 >
@@ -1681,25 +1749,11 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <FormField label="Início do aluguer">
-              <input
-                value={aluguerInicio}
-                onChange={(event) => setAluguerInicio(event.target.value)}
-                type="date"
-                min={itemAluguer.dataInicioDisponibilidade || undefined}
-                max={itemAluguer.dataFimDisponibilidade || undefined}
-                className="inputEntartes"
-              />
+              <SeletorData value={aluguerInicio} onChange={setAluguerInicio} />
             </FormField>
 
             <FormField label="Fim do aluguer">
-              <input
-                value={aluguerFim}
-                onChange={(event) => setAluguerFim(event.target.value)}
-                type="date"
-                min={aluguerInicio || itemAluguer.dataInicioDisponibilidade || undefined}
-                max={itemAluguer.dataFimDisponibilidade || undefined}
-                className="inputEntartes"
-              />
+              <SeletorData value={aluguerFim} onChange={setAluguerFim} />
             </FormField>
           </div>
 
@@ -1750,22 +1804,11 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <FormField label="Nova data de início">
-              <input
-                value={sugestaoInicio}
-                onChange={(event) => setSugestaoInicio(event.target.value)}
-                type="date"
-                className="inputEntartes"
-              />
+              <SeletorData value={sugestaoInicio} onChange={setSugestaoInicio} />
             </FormField>
 
             <FormField label="Nova data de fim">
-              <input
-                value={sugestaoFim}
-                onChange={(event) => setSugestaoFim(event.target.value)}
-                type="date"
-                min={sugestaoInicio || undefined}
-                className="inputEntartes"
-              />
+              <SeletorData value={sugestaoFim} onChange={setSugestaoFim} />
             </FormField>
 
             <div className="md:col-span-2">
@@ -1794,6 +1837,44 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
               className="px-5 py-3 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] transition-colors disabled:opacity-70"
             >
               {isSaving ? 'A enviar...' : 'Enviar sugestão'}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {itemRemover && (
+        <Modal onClose={() => setItemRemover(null)}>
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <h2 className="text-[#2d5f4f]">Remover anúncio</h2>
+
+            <button
+              onClick={() => setItemRemover(null)}
+              className="p-2 rounded-lg hover:bg-[#f0f6f3]"
+              aria-label="Fechar"
+            >
+              <X className="w-5 h-5 text-[#2d5f4f]" />
+            </button>
+          </div>
+
+          <p className="text-[#5a7a6c] mb-6">
+            Tens a certeza que queres remover o anúncio <strong>{itemRemover.nome}</strong> do
+            marketplace? Esta ação não pode ser anulada.
+          </p>
+
+          <div className="flex flex-col-reverse md:flex-row md:items-center md:justify-end gap-3">
+            <button
+              onClick={() => setItemRemover(null)}
+              className="px-5 py-3 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-[#f0f6f3] transition-colors"
+            >
+              Cancelar
+            </button>
+
+            <button
+              onClick={() => void confirmarRemocao()}
+              disabled={isSaving}
+              className="px-5 py-3 rounded-xl bg-[#9a3a3a] text-white hover:bg-[#823131] transition-colors disabled:opacity-70"
+            >
+              {isSaving ? 'A remover...' : 'Remover anúncio'}
             </button>
           </div>
         </Modal>

@@ -285,3 +285,14 @@ export async function sugerirDataRequisicaoInventario(
 
   return adaptarItemInventarioBackend(response.item);
 }
+
+export async function aceitarSugestaoRequisicaoInventario(
+  itemId: string,
+  requisicaoId: string
+) {
+  const response = await api.patch<InventarioMutationResponse>(
+    `/inventario/${itemId}/requisicoes/${requisicaoId}/aceitar-sugestao`
+  );
+
+  return adaptarItemInventarioBackend(response.item);
+}

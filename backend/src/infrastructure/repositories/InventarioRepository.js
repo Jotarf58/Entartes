@@ -97,6 +97,22 @@ class InventarioRepository {
         );
     }
 
+    async aceitarSugestaoRequisicao(itemId, requisicaoId, dados) {
+        return await ItemInventarioModel.findOneAndUpdate(
+            { _id: itemId, "requisicoes._id": requisicaoId },
+            {
+                $set: {
+                    "requisicoes.$.dataInicio": dados.dataInicio,
+                    "requisicoes.$.dataFim": dados.dataFim,
+                    "requisicoes.$.dataSugeridaInicio": null,
+                    "requisicoes.$.dataSugeridaFim": null,
+                    "requisicoes.$.mensagemResposta": ""
+                }
+            },
+            { new: true }
+        );
+    }
+
     async sugerirData(itemId, requisicaoId, dados) {
         const set = {};
 
