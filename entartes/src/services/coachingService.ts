@@ -7,7 +7,8 @@ export type EstadoPedidoCoachingBackend =
   | 'APROVADO'
   | 'REJEITADO'
   | 'INTERESSE_REGISTADO'
-  | 'ACEITE_PROFESSOR';
+  | 'ACEITE_PROFESSOR'
+  | 'AGUARDA_ALUNO';
 
 export type TipoAlunoBackend = 'CRIANCA_JOVEM' | 'ADULTO';
 export type TipoCoachingBackend = 'Individual' | 'Grupo';
@@ -36,6 +37,7 @@ export type PedidoCoachingBackend = {
   professorPreferencialNome?: string;
   professoresInteressados?: string[];
   tipoCoaching?: TipoCoachingBackend;
+  duracaoMinutos?: number;
   outrosAlunosSugeridos?: string;
   preferenciaHorario?: string;
   observacoes?: string;
@@ -112,6 +114,7 @@ export type PedidoCoachingApp = {
   professorPreferencialNome: string;
   professoresInteressados: string[];
   tipoCoaching: TipoCoachingBackend;
+  duracaoMinutos: number;
   outrosAlunosSugeridos: string;
   preferenciaHorario: string;
   observacoes: string;
@@ -242,6 +245,7 @@ export type CriarPedidoCoachingInput = {
   professorPreferencialId?: string | null;
   professorPreferencialNome?: string;
   tipoCoaching?: TipoCoachingBackend;
+  duracaoMinutos?: number;
   outrosAlunosSugeridos?: string;
   preferenciaHorario?: string;
   observacoes?: string;
@@ -419,6 +423,7 @@ export function adaptarPedidoCoachingBackend(
     professorPreferencialNome: pedido.professorPreferencialNome ?? professorNome,
     professoresInteressados: pedido.professoresInteressados ?? [],
     tipoCoaching: pedido.tipoCoaching ?? 'Individual',
+    duracaoMinutos: pedido.duracaoMinutos ?? 60,
     outrosAlunosSugeridos: pedido.outrosAlunosSugeridos ?? '',
     preferenciaHorario: pedido.preferenciaHorario ?? pedido.horarioFinal ?? '',
     observacoes: pedido.observacoes ?? pedido.notas ?? '',
@@ -513,6 +518,7 @@ export async function criarPedidoCoaching(input: CriarPedidoCoachingInput) {
     professorPreferencialId: input.professorPreferencialId ?? input.professorId ?? null,
     professorPreferencialNome: input.professorPreferencialNome ?? input.professorNome ?? '',
     tipoCoaching: input.tipoCoaching ?? 'Individual',
+    duracaoMinutos: input.duracaoMinutos ?? 60,
     outrosAlunosSugeridos: input.outrosAlunosSugeridos ?? '',
     preferenciaHorario: input.preferenciaHorario ?? input.horarioFinal ?? '',
     observacoes: input.observacoes ?? input.notas ?? '',

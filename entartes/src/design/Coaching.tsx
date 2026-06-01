@@ -87,6 +87,7 @@ type PedidoCoaching = {
   professorPreferencialId: string;
   professorPreferencialNome: string;
   tipoCoaching: TipoCoaching;
+  duracaoMinutos: number;
   outrosAlunosSugeridos: string;
   preferenciaHorario: string;
   observacoes: string;
@@ -124,6 +125,7 @@ type PedidoForm = {
   modalidade: string;
   professorPreferencialId: string;
   tipoCoaching: TipoCoaching;
+  duracaoMinutos: number;
   alunosConvidados: string;
   dataPreferida: string;
   horaPreferida: string;
@@ -146,6 +148,7 @@ const estadoLabels: Record<EstadoPedido, string> = {
   EM_ANALISE: 'Em análise',
   INTERESSE_REGISTADO: 'Interesse registado',
   ACEITE_PROFESSOR: 'Aceite pelo professor',
+  AGUARDA_ALUNO: 'Aguarda confirmação do aluno',
   AGENDADO: 'Agendado',
   APROVADO: 'Aprovado',
   REJEITADO: 'Rejeitado',
@@ -156,6 +159,7 @@ const estadoStyles: Record<EstadoPedido, string> = {
   EM_ANALISE: 'bg-[#d4e8ff] text-[#2d5f7f]',
   INTERESSE_REGISTADO: 'bg-[#d4e8ff] text-[#2d5f7f]',
   ACEITE_PROFESSOR: 'bg-[#e8d4ff] text-[#5a3c7a]',
+  AGUARDA_ALUNO: 'bg-[#ffe8cc] text-[#8a5a1d]',
   AGENDADO: 'bg-[#f0e4ff] text-[#5a3c7a]',
   APROVADO: 'bg-[#d4e8df] text-[#2d5f4f]',
   REJEITADO: 'bg-[#ffe0e0] text-[#9a3a3a]',
@@ -410,6 +414,7 @@ function pedidoBackendParaUi(
     professorPreferencialId: professorId,
     professorPreferencialNome: professorNome,
     tipoCoaching: pedido.tipoCoaching || 'Individual',
+    duracaoMinutos: pedido.duracaoMinutos ?? 60,
     outrosAlunosSugeridos: pedido.outrosAlunosSugeridos || '',
     preferenciaHorario: pedido.preferenciaHorario || pedido.horarioFinal || '',
     observacoes: pedido.observacoes || '',
@@ -478,6 +483,7 @@ function criarPedidoForm(currentUser: CurrentUser, alunos: AlunoAssociado[]): Pe
     modalidade: modalidades[0] ?? 'Ballet',
     professorPreferencialId: '',
     tipoCoaching: 'Individual',
+    duracaoMinutos: 60,
     alunosConvidados: '',
     dataPreferida: '',
     horaPreferida: '',
@@ -519,6 +525,18 @@ function dataNoPassado(data: string) {
   const alvo = new Date(`${data}T00:00:00`);
 
   return !Number.isNaN(alvo.getTime()) && alvo.getTime() < hoje.getTime();
+}
+
+const DURACOES_COACHING = [30, 45, 60, 90, 120];
+
+function formatarDuracao(minutos: number) {
+  if (!minutos) return '60 min';
+  if (minutos < 60) return `${minutos} min`;
+
+  const horas = Math.floor(minutos / 60);
+  const resto = minutos % 60;
+
+  return resto ? `${horas}h${String(resto).padStart(2, '0')}` : `${horas}h`;
 }
 
 function formatarHorarioPreferido(data: string, hora: string) {
@@ -573,6 +591,13 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
   const [pedidoEditandoId, setPedidoEditandoId] = useState<string | null>(null);
   const [vagaEditandoId, setVagaEditandoId] = useState<string | null>(null);
   const [pedidoConfirmacao, setPedidoConfirmacao] = useState<PedidoCoaching | null>(null);
+  const [confirmandoAlteracoes, setConfirmandoAlteracoes] = useState(false);
+  const [confirmacaoForm, setConfirmacaoForm] = useState({
+    professorPreferencialId: '',
+    duracaoMinutos: 60,
+    dataPreferida: '',
+    horaPreferida: '',
+  });
 
   const [pedidoForm, setPedidoForm] = useState<PedidoForm>(() => criarPedidoForm(currentUser, []));
   const [vagaForm, setVagaForm] = useState<VagaForm>(criarVagaForm(currentUser, estudios));
@@ -702,17 +727,22 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
   }, [pedidosDoPerfil, estadoFiltro, modalidadeFiltro]);
 
   const vagasVisiveis = useMemo(() => {
+    const vagaPontualNoPassado = (vaga: VagaCoaching) =>
+      vaga.estado === 'ABERTA' && dataNoPassado(vaga.dataInicio);
+
+    const ativas = vagas.filter((vaga) => !vagaPontualNoPassado(vaga));
+
     if (isProfessor) {
-      return vagas.filter(
+      return ativas.filter(
         (vaga) => vaga.professorId === professorIdAtual || vaga.professorNome === currentUser.name
       );
     }
 
     if (isCoordenacao) {
-      return vagas;
+      return ativas;
     }
 
-    return vagas.filter((vaga) => vaga.estado === 'ABERTA');
+    return ativas.filter((vaga) => vaga.estado === 'ABERTA');
   }, [vagas, currentUser.name, isCoordenacao, isProfessor, professorIdAtual]);
 
   const pedidosAssociaveis = pedidos.filter(
@@ -772,6 +802,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
       modalidade: pedido.modalidade,
       professorPreferencialId: pedido.professorPreferencialId,
       tipoCoaching: pedido.tipoCoaching,
+      duracaoMinutos: pedido.duracaoMinutos,
       alunosConvidados: pedido.outrosAlunosSugeridos,
       dataPreferida: '',
       horaPreferida: '',
@@ -970,6 +1001,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
       professorId: pedidoForm.professorPreferencialId || null,
       professorNome,
       tipoCoaching: pedidoForm.tipoCoaching,
+      duracaoMinutos: pedidoForm.duracaoMinutos,
       outrosAlunosSugeridos: alunosConvidados,
       preferenciaHorario,
       observacoes: pedidoForm.observacoes.trim(),
@@ -1145,12 +1177,102 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
     }
   }
 
+  function abrirConfirmacao(pedido: PedidoCoaching) {
+    setPedidoConfirmacao(pedido);
+    setConfirmandoAlteracoes(false);
+    setConfirmacaoForm({
+      professorPreferencialId: pedido.professorPreferencialId || professorIdAtual,
+      duracaoMinutos: pedido.duracaoMinutos,
+      dataPreferida: '',
+      horaPreferida: '',
+    });
+    setToast(null);
+  }
+
+  function fecharConfirmacao() {
+    setPedidoConfirmacao(null);
+    setConfirmandoAlteracoes(false);
+  }
+
   async function confirmarAceitacao() {
     if (!pedidoConfirmacao) return;
 
     const pedido = pedidoConfirmacao;
-    setPedidoConfirmacao(null);
+    fecharConfirmacao();
     await aceitarPedido(pedido);
+  }
+
+  async function confirmarComAlteracoes() {
+    if (!pedidoConfirmacao) return;
+
+    const pedido = pedidoConfirmacao;
+    const professorNome = getProfessorNomeComLista(
+      confirmacaoForm.professorPreferencialId,
+      professoresOpcoes,
+      currentUser.name
+    );
+    const novoHorario =
+      formatarHorarioPreferido(confirmacaoForm.dataPreferida, confirmacaoForm.horaPreferida) ||
+      pedido.preferenciaHorario;
+
+    try {
+      setIsSaving(true);
+
+      const pedidoAtualizado = await atualizarPedidoCoaching(pedido.id, {
+        professorId: confirmacaoForm.professorPreferencialId || null,
+        professorNome,
+        duracaoMinutos: confirmacaoForm.duracaoMinutos,
+        preferenciaHorario: novoHorario,
+        estado: 'AGUARDA_ALUNO',
+      });
+
+      atualizarPedidoLocal({
+        ...pedido,
+        ...pedidoBackendParaUi(pedidoAtualizado, professoresOpcoes),
+        alunoNome: pedido.alunoNome,
+        encarregadoNome: pedido.encarregadoNome,
+        professorPreferencialId: confirmacaoForm.professorPreferencialId,
+        professorPreferencialNome: professorNome,
+        duracaoMinutos: confirmacaoForm.duracaoMinutos,
+        preferenciaHorario: novoHorario,
+        estado: 'AGUARDA_ALUNO',
+      });
+
+      fecharConfirmacao();
+      setMensagem('Alterações enviadas. O pedido aguarda nova confirmação do aluno.');
+    } catch (error) {
+      notificar(getErrorMessage(error), 'erro');
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function responderAlteracoes(pedido: PedidoCoaching, aceitar: boolean) {
+    try {
+      setIsSaving(true);
+
+      if (aceitar) {
+        const pedidoAtualizado = await atualizarPedidoCoaching(pedido.id, {
+          estado: 'ACEITE_PROFESSOR',
+        });
+
+        atualizarPedidoLocal({
+          ...pedido,
+          ...pedidoBackendParaUi(pedidoAtualizado, professoresOpcoes),
+          alunoNome: pedido.alunoNome,
+          encarregadoNome: pedido.encarregadoNome,
+          estado: 'ACEITE_PROFESSOR',
+        });
+
+        setMensagem('Aceitaste as alterações propostas pelo professor.');
+      } else {
+        await rejeitarPedido(pedido);
+      }
+    } catch (error) {
+      notificar(getErrorMessage(error), 'erro');
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   async function aprovarPedido(pedido: PedidoCoaching) {
@@ -1514,48 +1636,145 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
       <Toast toast={toast} onClose={() => setToast(null)} />
 
       {pedidoConfirmacao && (
-        <Modal onClose={() => setPedidoConfirmacao(null)}>
+        <Modal onClose={fecharConfirmacao}>
           <ModalHeader
             title="Confirmar dados do coaching"
-            subtitle="Revê os dados antes de aceitar o pedido."
-            onClose={() => setPedidoConfirmacao(null)}
+            subtitle={
+              confirmandoAlteracoes
+                ? 'Altera os dados. O aluno terá de confirmar as alterações.'
+                : 'Revê os dados antes de aceitar o pedido.'
+            }
+            onClose={fecharConfirmacao}
           />
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            <Info label="Aluno" value={pedidoConfirmacao.alunoNome} />
-            <Info label="Modalidade" value={pedidoConfirmacao.modalidade} />
-            <Info label="Tipo de coaching" value={pedidoConfirmacao.tipoCoaching} />
-            <Info
-              label="Horário preferido"
-              value={pedidoConfirmacao.preferenciaHorario || 'A combinar'}
-            />
-          </div>
+          {confirmandoAlteracoes ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <FormField label="Professor">
+                <select
+                  value={confirmacaoForm.professorPreferencialId}
+                  onChange={(event) =>
+                    setConfirmacaoForm((atual) => ({
+                      ...atual,
+                      professorPreferencialId: event.target.value,
+                    }))
+                  }
+                  className="inputEntartes"
+                >
+                  <option value="">Sem preferência</option>
+                  {professoresOpcoes.map((professor) => (
+                    <option value={professor.id} key={professor.id}>
+                      {professor.nome}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
 
-          {pedidoConfirmacao.tipoCoaching === 'Grupo' &&
-            pedidoConfirmacao.outrosAlunosSugeridos && (
-              <div className="mb-4">
+              <FormField label="Duração">
+                <select
+                  value={confirmacaoForm.duracaoMinutos}
+                  onChange={(event) =>
+                    setConfirmacaoForm((atual) => ({
+                      ...atual,
+                      duracaoMinutos: Number(event.target.value),
+                    }))
+                  }
+                  className="inputEntartes"
+                >
+                  {DURACOES_COACHING.map((minutos) => (
+                    <option value={minutos} key={minutos}>
+                      {formatarDuracao(minutos)}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
+
+              <FormField label="Nova data (opcional)">
+                <SeletorData
+                  value={confirmacaoForm.dataPreferida}
+                  onChange={(valor) =>
+                    setConfirmacaoForm((atual) => ({ ...atual, dataPreferida: valor }))
+                  }
+                />
+              </FormField>
+
+              <FormField label="Nova hora (opcional)">
+                <SeletorHora
+                  value={confirmacaoForm.horaPreferida}
+                  onChange={(valor) =>
+                    setConfirmacaoForm((atual) => ({ ...atual, horaPreferida: valor }))
+                  }
+                />
+              </FormField>
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <Info label="Aluno" value={pedidoConfirmacao.alunoNome} />
+                <Info label="Modalidade" value={pedidoConfirmacao.modalidade} />
+                <Info label="Tipo de coaching" value={pedidoConfirmacao.tipoCoaching} />
+                <Info label="Duração" value={formatarDuracao(pedidoConfirmacao.duracaoMinutos)} />
                 <Info
-                  label="Alunos convidados"
-                  value={pedidoConfirmacao.outrosAlunosSugeridos}
+                  label="Horário preferido"
+                  value={pedidoConfirmacao.preferenciaHorario || 'A combinar'}
                 />
               </div>
-            )}
 
-          {pedidoConfirmacao.observacoes && (
-            <div className="mb-4 rounded-xl bg-[#f8faf9] border border-[#e8f0ed] p-4">
-              <p className="text-xs text-[#7a9a8c] mb-1">Observações</p>
-              <p className="text-sm text-[#5a7a6c] whitespace-pre-line">
-                {pedidoConfirmacao.observacoes}
-              </p>
-            </div>
+              {pedidoConfirmacao.tipoCoaching === 'Grupo' &&
+                pedidoConfirmacao.outrosAlunosSugeridos && (
+                  <div className="mb-4">
+                    <Info
+                      label="Alunos convidados"
+                      value={pedidoConfirmacao.outrosAlunosSugeridos}
+                    />
+                  </div>
+                )}
+
+              {pedidoConfirmacao.observacoes && (
+                <div className="mb-4 rounded-xl bg-[#f8faf9] border border-[#e8f0ed] p-4">
+                  <p className="text-xs text-[#7a9a8c] mb-1">Observações</p>
+                  <p className="text-sm text-[#5a7a6c] whitespace-pre-line">
+                    {pedidoConfirmacao.observacoes}
+                  </p>
+                </div>
+              )}
+            </>
           )}
 
-          <ModalActions
-            cancelLabel="Cancelar"
-            confirmLabel={isSaving ? 'A aceitar...' : 'Confirmar e aceitar'}
-            onCancel={() => setPedidoConfirmacao(null)}
-            onConfirm={() => void confirmarAceitacao()}
-          />
+          <div className="flex flex-col-reverse md:flex-row md:items-center md:justify-between gap-3 mt-6">
+            <button
+              onClick={() => setConfirmandoAlteracoes((atual) => !atual)}
+              className="px-5 py-3 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-[#f0f6f3] transition-colors"
+            >
+              {confirmandoAlteracoes ? 'Voltar' : 'Alterar dados'}
+            </button>
+
+            <div className="flex flex-col-reverse md:flex-row md:items-center md:justify-end gap-3">
+              <button
+                onClick={fecharConfirmacao}
+                className="px-5 py-3 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-[#f0f6f3] transition-colors"
+              >
+                Cancelar
+              </button>
+
+              {confirmandoAlteracoes ? (
+                <button
+                  onClick={() => void confirmarComAlteracoes()}
+                  disabled={isSaving}
+                  className="px-5 py-3 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] transition-colors disabled:opacity-70"
+                >
+                  {isSaving ? 'A guardar...' : 'Enviar alterações ao aluno'}
+                </button>
+              ) : (
+                <button
+                  onClick={() => void confirmarAceitacao()}
+                  disabled={isSaving}
+                  className="px-5 py-3 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] transition-colors disabled:opacity-70"
+                >
+                  {isSaving ? 'A aceitar...' : 'Confirmar e aceitar'}
+                </button>
+              )}
+            </div>
+          </div>
         </Modal>
       )}
 
@@ -1611,6 +1830,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
                 <option value="PENDENTE">Pendente</option>
                 <option value="INTERESSE_REGISTADO">Interesse registado</option>
                 <option value="ACEITE_PROFESSOR">Aceite pelo professor</option>
+                <option value="AGUARDA_ALUNO">Aguarda aluno</option>
                 <option value="APROVADO">Aprovado</option>
                 <option value="REJEITADO">Rejeitado</option>
               </select>
@@ -1679,12 +1899,32 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
                     </button>
                   )}
 
+                  {(isAluno || isEncarregado) && pedido.estado === 'AGUARDA_ALUNO' && (
+                    <>
+                      <button
+                        onClick={() => void responderAlteracoes(pedido, true)}
+                        disabled={isSaving}
+                        className="px-3 py-2 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] disabled:opacity-60"
+                      >
+                        Aceitar alterações
+                      </button>
+
+                      <button
+                        onClick={() => void responderAlteracoes(pedido, false)}
+                        disabled={isSaving}
+                        className="px-3 py-2 rounded-xl border border-[#ffd2d2] text-[#9a3a3a] hover:bg-[#fff5f5] disabled:opacity-60"
+                      >
+                        Recusar
+                      </button>
+                    </>
+                  )}
+
                   {podeAlterarEstado && (
                     <>
                       {isProfessor &&
                         (pedido.estado === 'PENDENTE' || pedido.estado === 'INTERESSE_REGISTADO') && (
                           <button
-                            onClick={() => setPedidoConfirmacao(pedido)}
+                            onClick={() => abrirConfirmacao(pedido)}
                             disabled={isSaving}
                             className="px-3 py-2 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] disabled:opacity-60"
                           >
@@ -1718,13 +1958,14 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mt-5">
                 <Info
                   label="Professor preferencial"
                   value={pedido.professorPreferencialNome || 'Sem preferência'}
                 />
                 <Info label="Horário preferido" value={pedido.preferenciaHorario || 'A combinar'} />
                 <Info label="Tipo de coaching" value={pedido.tipoCoaching} />
+                <Info label="Duração" value={formatarDuracao(pedido.duracaoMinutos)} />
               </div>
 
               {!isEncarregado && !isAluno && pedido.encarregadoNome && (
@@ -1951,6 +2192,22 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
               >
                 <option value="Individual">Individual</option>
                 <option value="Grupo">Grupo</option>
+              </select>
+            </FormField>
+
+            <FormField label="Duração">
+              <select
+                value={pedidoForm.duracaoMinutos}
+                onChange={(event) =>
+                  atualizarPedidoForm('duracaoMinutos', Number(event.target.value))
+                }
+                className="inputEntartes"
+              >
+                {DURACOES_COACHING.map((minutos) => (
+                  <option value={minutos} key={minutos}>
+                    {formatarDuracao(minutos)}
+                  </option>
+                ))}
               </select>
             </FormField>
 

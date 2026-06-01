@@ -14,6 +14,7 @@ const pedidoCoachingSchema = new mongoose.Schema(
         professorPreferencialNome: { type: String, default: "", trim: true },
         professoresInteressados: [{ type: String }],
         tipoCoaching: { type: String, enum: ["Individual", "Grupo"], default: "Individual" },
+        duracaoMinutos: { type: Number, default: 60 },
         outrosAlunosSugeridos: { type: String, default: "", trim: true },
         preferenciaHorario: { type: String, default: "", trim: true },
         observacoes: { type: String, default: "", trim: true },
@@ -31,7 +32,8 @@ const pedidoCoachingSchema = new mongoose.Schema(
                 "APROVADO",
                 "REJEITADO",
                 "INTERESSE_REGISTADO",
-                "ACEITE_PROFESSOR"
+                "ACEITE_PROFESSOR",
+                "AGUARDA_ALUNO"
             ],
             default: "PENDENTE"
         },

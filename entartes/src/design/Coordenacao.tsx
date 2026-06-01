@@ -23,6 +23,7 @@ import { ApiError } from '../services/api';
 import {
   aceitarPedidoCoaching,
   aprovarPedidoCoaching,
+  atualizarPedidoCoaching,
   fecharVagaCoaching,
   listarPedidosCoaching,
   listarProfessoresCoaching,
@@ -89,6 +90,7 @@ type PedidoCoaching = {
   professorPreferencialId: string;
   professorPreferencialNome: string;
   tipoCoaching: string;
+  duracaoMinutos: number;
   outrosAlunosSugeridos: string;
   preferenciaHorario: string;
   observacoes: string;
@@ -137,6 +139,7 @@ type PedidoForm = {
   professorPreferencialId: string;
   salaNome: string;
   preferenciaHorario: string;
+  duracaoMinutos: number;
   estado: EstadoPedidoCoaching;
   observacoes: string;
   motivoRejeicao: string;
@@ -186,6 +189,7 @@ const estadoPedidoLabels: Record<EstadoPedidoCoaching, string> = {
   EM_ANALISE: 'Em análise',
   INTERESSE_REGISTADO: 'Interesse registado',
   ACEITE_PROFESSOR: 'Aceite pelo professor',
+  AGUARDA_ALUNO: 'Aguarda aluno',
   AGENDADO: 'Agendado',
   APROVADO: 'Aprovado',
   REJEITADO: 'Rejeitado',
@@ -196,6 +200,7 @@ const estadoPedidoStyles: Record<EstadoPedidoCoaching, string> = {
   EM_ANALISE: 'bg-[#d4e8ff] text-[#2d5f7f]',
   INTERESSE_REGISTADO: 'bg-[#d4e8ff] text-[#2d5f7f]',
   ACEITE_PROFESSOR: 'bg-[#e8d4ff] text-[#5a3c7a]',
+  AGUARDA_ALUNO: 'bg-[#ffe8cc] text-[#8a5a1d]',
   AGENDADO: 'bg-[#f0e4ff] text-[#5a3c7a]',
   APROVADO: 'bg-[#d4e8df] text-[#2d5f4f]',
   REJEITADO: 'bg-[#ffe0e0] text-[#9a3a3a]',
@@ -305,6 +310,7 @@ function mapPedidoBackendParaCoordenacao(
       professorNomeGuardado
     ),
     tipoCoaching: pedido.tipoCoaching || 'Individual',
+    duracaoMinutos: pedido.duracaoMinutos ?? 60,
     outrosAlunosSugeridos: pedido.outrosAlunosSugeridos || '',
     preferenciaHorario:
       pedido.preferenciaHorario ||
@@ -438,6 +444,7 @@ function pedidoParaForm(pedido: PedidoCoaching): PedidoForm {
     professorPreferencialId: pedido.professorPreferencialId,
     salaNome: pedido.salaNome,
     preferenciaHorario: pedido.preferenciaHorario,
+    duracaoMinutos: pedido.duracaoMinutos,
     estado: pedido.estado,
     observacoes: pedido.observacoes,
     motivoRejeicao: pedido.motivoRejeicao,
@@ -701,6 +708,16 @@ export default function Coordenacao() {
         }
       }
 
+      await atualizarPedidoCoaching(pedidoEditandoId, {
+        modalidade: pedidoForm.modalidade,
+        professorId: pedidoForm.professorPreferencialId || null,
+        professorNome: getProfessorNome(pedidoForm.professorPreferencialId),
+        salaNome: pedidoForm.salaNome,
+        preferenciaHorario: pedidoForm.preferenciaHorario,
+        duracaoMinutos: pedidoForm.duracaoMinutos,
+        observacoes: pedidoForm.observacoes,
+      });
+
       setPedidos((atuais) =>
         atuais.map((pedido) =>
           pedido.id === pedidoEditandoId
@@ -714,6 +731,7 @@ export default function Coordenacao() {
                 ),
                 salaNome: pedidoForm.salaNome,
                 preferenciaHorario: pedidoForm.preferenciaHorario,
+                duracaoMinutos: pedidoForm.duracaoMinutos,
                 estado: pedidoForm.estado,
                 observacoes: pedidoForm.observacoes,
                 motivoRejeicao: pedidoForm.motivoRejeicao,
@@ -1201,7 +1219,7 @@ export default function Coordenacao() {
                       </p>
 
                       <p className="text-xs text-[#7a9a8c] mt-1">
-                        {pedido.preferenciaHorario} · {pedido.salaNome}
+                        {pedido.preferenciaHorario || 'Sem data definida'} · {pedido.duracaoMinutos} min · {pedido.salaNome}
                       </p>
                     </div>
 
@@ -1588,6 +1606,22 @@ export default function Coordenacao() {
                 }
                 className="inputEntartes"
               />
+            </FormField>
+
+            <FormField label="Duração">
+              <select
+                value={pedidoForm.duracaoMinutos}
+                onChange={(event) =>
+                  atualizarPedidoForm('duracaoMinutos', Number(event.target.value))
+                }
+                className="inputEntartes"
+              >
+                <option value={30}>30 min</option>
+                <option value={45}>45 min</option>
+                <option value={60}>1h</option>
+                <option value={90}>1h30</option>
+                <option value={120}>2h</option>
+              </select>
             </FormField>
 
             {pedidoForm.estado === 'REJEITADO' && (
