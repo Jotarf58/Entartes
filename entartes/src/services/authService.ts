@@ -73,6 +73,7 @@ export type AppUser = {
   description: string;
   initials: string;
   educandos: AlunoAssociado[];
+  isMenor: boolean;
   token: string;
 };
 
@@ -193,6 +194,9 @@ export function buildAppUserFromAuthResponse(
     .filter((item) => item.tipoPerfil === 'ALUNO')
     .map((item) => ({ id: item.id, nome: item.nome }));
 
+  const contaTemEncarregado = perfisConta.some((item) => item.tipoPerfil === 'ENCARREGADO');
+  const isMenor = perfil.tipoPerfil === 'ALUNO' && contaTemEncarregado;
+
   return {
     contaId: utilizador.id,
     perfilId: perfil.id,
@@ -205,6 +209,7 @@ export function buildAppUserFromAuthResponse(
     description: getProfileDescription(perfil.tipoPerfil),
     initials: getInitials(perfil.nome),
     educandos,
+    isMenor,
     token: response.token,
   };
 }

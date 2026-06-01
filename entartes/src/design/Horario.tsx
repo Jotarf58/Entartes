@@ -19,12 +19,7 @@ import {
   type ToastData,
 } from '../components/Toast';
 
-import {
-  modalidades,
-  professores,
-  salas,
-  type DiaSemana,
-} from '../data/mockEntartes';
+import { modalidades, type DiaSemana } from '../data/mockEntartes';
 import {
   atualizarAulaSemanal,
   criarAulaSemanal,
@@ -141,40 +136,6 @@ const estadoAulaLabels: Record<EstadoAula, string> = {
   RASCUNHO: 'Rascunho',
   CANCELADA: 'Cancelada',
 };
-
-function getString(item: Record<string, unknown>, keys: string[], fallback = '') {
-  for (const key of keys) {
-    const value = item[key];
-
-    if (typeof value === 'string' && value.trim()) {
-      return value;
-    }
-  }
-
-  return fallback;
-}
-
-function normalizarProfessores(): Professor[] {
-  return professores.map((professor, index) => {
-    const item = professor as Record<string, unknown>;
-
-    return {
-      id: getString(item, ['id'], `professor-${index}`),
-      nome: getString(item, ['nome'], `Professor ${index + 1}`),
-    };
-  });
-}
-
-function normalizarSalas(): Sala[] {
-  return salas.map((sala, index) => {
-    const item = sala as Record<string, unknown>;
-
-    return {
-      id: getString(item, ['id'], `sala-${index}`),
-      nome: getString(item, ['nome'], `Sala ${index + 1}`),
-    };
-  });
-}
 
 function criarAulaFormVazio(
   professoresLista: Professor[],
@@ -358,10 +319,8 @@ export default function Horario({ currentUser }: { currentUser: CurrentUser }) {
   const isProfessor = currentUser.role === 'PROFESSOR';
   const isCoordenacao = currentUser.role === 'COORDENACAO';
 
-  const [professoresLista, setProfessoresLista] = useState<Professor[]>(() =>
-    normalizarProfessores()
-  );
-  const [salasLista, setSalasLista] = useState<Sala[]>(() => normalizarSalas());
+  const [professoresLista, setProfessoresLista] = useState<Professor[]>([]);
+  const [salasLista, setSalasLista] = useState<Sala[]>([]);
   const [modalidadesLista, setModalidadesLista] = useState<string[]>(() => [
     ...modalidades,
   ]);

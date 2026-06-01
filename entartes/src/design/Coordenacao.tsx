@@ -473,6 +473,60 @@ function splitModalidades(texto: string) {
     .filter(Boolean);
 }
 
+const VALOR_HORA_COACHING_NORMAL = 36;
+const VALOR_HORA_COACHING_ESPECIAL = 43.5;
+
+function parseDataHoraCoaching(texto: string) {
+  let dataISO = '';
+  let hora = '';
+
+  const dataMatch = texto.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  if (dataMatch) dataISO = `${dataMatch[3]}-${dataMatch[2]}-${dataMatch[1]}`;
+
+  const horaMatch = texto.match(/(\d{2}):(\d{2})/);
+  if (horaMatch) hora = `${horaMatch[1]}:${horaMatch[2]}`;
+
+  return { dataISO, hora };
+}
+
+function ehDomingoOuFeriado(dataISO: string, interrupcoes: Interrupcao[]) {
+  if (!dataISO) return false;
+
+  const data = new Date(`${dataISO}T00:00:00`);
+  if (Number.isNaN(data.getTime())) return false;
+  if (data.getDay() === 0) return true;
+
+  return interrupcoes.some((interrupcao) => {
+    if (!interrupcao.escolaEncerrada) return false;
+    const fim = interrupcao.dataFim || interrupcao.data;
+    return dataISO >= interrupcao.data && dataISO <= fim;
+  });
+}
+
+function valorHoraCoaching(dataISO: string, interrupcoes: Interrupcao[]) {
+  return ehDomingoOuFeriado(dataISO, interrupcoes)
+    ? VALOR_HORA_COACHING_ESPECIAL
+    : VALOR_HORA_COACHING_NORMAL;
+}
+
+function calcularValorCoaching(
+  dataISO: string,
+  duracaoMinutos: number,
+  interrupcoes: Interrupcao[]
+) {
+  return (duracaoMinutos / 60) * valorHoraCoaching(dataISO, interrupcoes);
+}
+
+function coachingJaPassou(dataISO: string, hora: string, duracaoMinutos: number) {
+  if (!dataISO) return false;
+
+  const inicio = new Date(`${dataISO}T${hora || '00:00'}:00`);
+  if (Number.isNaN(inicio.getTime())) return false;
+
+  const fim = new Date(inicio.getTime() + duracaoMinutos * 60000);
+  return fim.getTime() < Date.now();
+}
+
 export default function Coordenacao() {
   const [salasLocais, setSalasLocais] = useState<Sala[]>([]);
   const [eventosResumo, setEventosResumo] = useState<EventoResumo[]>([]);
@@ -629,6 +683,62 @@ export default function Coordenacao() {
   const totalHorasCoaching = vagas
     .filter((vaga) => vaga.estado !== 'FECHADA')
     .reduce((total, vaga) => total + calcularHoras(vaga.horaInicio, vaga.horaFim), 0);
+
+  const coachingsFaturaveis = useMemo(() => {
+    const jaFaturados = new Set(
+      registosFinanceiros
+        .filter((registo) => registo.origem === 'COACHING')
+        .map((registo) => registo.origemId)
+    );
+
+    return pedidos
+      .filter((pedido) => pedido.estado === 'AGENDADO' || pedido.estado === 'APROVADO')
+      .map((pedido) => {
+        const { dataISO, hora } = parseDataHoraCoaching(pedido.preferenciaHorario);
+        return { pedido, dataISO, hora };
+      })
+      .filter(
+        ({ pedido, dataISO, hora }) =>
+          dataISO &&
+          coachingJaPassou(dataISO, hora, pedido.duracaoMinutos) &&
+          !jaFaturados.has(pedido.id)
+      );
+  }, [pedidos, registosFinanceiros]);
+
+  async function faturarCoachings() {
+    if (coachingsFaturaveis.length === 0) return;
+
+    try {
+      setErro('');
+
+      const novos: RegistoFinanceiroApp[] = [];
+
+      for (const { pedido, dataISO } of coachingsFaturaveis) {
+        const valor = Number(
+          calcularValorCoaching(dataISO, pedido.duracaoMinutos, interrupcoes).toFixed(2)
+        );
+
+        const registo = await criarRegistoFinanceiro({
+          tipo: 'COACHING',
+          descricao: `Coaching de ${pedido.alunoNome} (${formatDate(dataISO)} · ${pedido.duracaoMinutos} min · ${valorHoraCoaching(dataISO, interrupcoes)}€/h)`,
+          valor,
+          data: dataISO,
+          origem: 'COACHING',
+          origemId: pedido.id,
+          estado: 'FATURADO',
+        });
+
+        novos.push(registo);
+      }
+
+      setRegistosFinanceiros((atuais) => [...novos, ...atuais]);
+      setTotalFinanceiro((atual) => atual + novos.reduce((soma, registo) => soma + registo.valor, 0));
+      setTotalRegistosFinanceiros((atual) => atual + novos.length);
+      setMensagem(`${novos.length} coaching(s) realizado(s) faturado(s) com sucesso.`);
+    } catch (error) {
+      setErro(getErrorMessage(error));
+    }
+  }
 
   const calendario = useMemo(() => {
     const itens = [
@@ -1269,6 +1379,27 @@ export default function Coordenacao() {
             <InfoBox label="Valor total" value={`${totalFinanceiro.toFixed(2)}€`} />
             <InfoBox label="Total de vagas" value={String(vagas.length)} />
             <InfoBox label="Horas de coaching" value={`${totalHorasCoaching.toFixed(1)}h`} />
+          </div>
+
+          <div className="rounded-xl bg-[#f0f6f3] border border-[#d9e8e1] p-4 mb-5">
+            <p className="text-sm text-[#2d5f4f]">
+              Tarifa de coaching: <strong>{VALOR_HORA_COACHING_NORMAL}€/h</strong> · domingos e
+              feriados <strong>{VALOR_HORA_COACHING_ESPECIAL}€/h</strong>
+            </p>
+
+            {coachingsFaturaveis.length > 0 ? (
+              <button
+                onClick={() => void faturarCoachings()}
+                className="mt-3 flex items-center gap-2 px-4 py-2 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] transition-colors"
+              >
+                <WalletCards className="w-4 h-4" />
+                Faturar {coachingsFaturaveis.length} coaching(s) realizado(s)
+              </button>
+            ) : (
+              <p className="text-xs text-[#7a9a8c] mt-2">
+                Não há coachings realizados por faturar.
+              </p>
+            )}
           </div>
 
           <div className="space-y-3">

@@ -74,6 +74,7 @@ type CurrentUser = {
   description: string;
   initials: string;
   educandos?: AlunoAssociado[];
+  isMenor?: boolean;
 };
 
 type TipoCoaching = 'Individual' | 'Grupo';
@@ -547,6 +548,23 @@ function formatarDuracao(minutos: number) {
   return resto ? `${horas}h${String(resto).padStart(2, '0')}` : `${horas}h`;
 }
 
+function parsePreferenciaHorario(texto: string) {
+  let dataPreferida = '';
+  let horaPreferida = '';
+
+  const dataMatch = texto.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  if (dataMatch) {
+    dataPreferida = `${dataMatch[3]}-${dataMatch[2]}-${dataMatch[1]}`;
+  }
+
+  const horaMatch = texto.match(/(\d{2}):(\d{2})/);
+  if (horaMatch) {
+    horaPreferida = `${horaMatch[1]}:${horaMatch[2]}`;
+  }
+
+  return { dataPreferida, horaPreferida };
+}
+
 function formatarHorarioPreferido(data: string, hora: string) {
   if (!data && !hora) return '';
 
@@ -579,9 +597,11 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
   const isProfessor = currentUser.role === 'PROFESSOR';
   const isCoordenacao = currentUser.role === 'COORDENACAO';
 
+  const isMenor = Boolean(currentUser.isMenor);
   const podeCriarPedido = isEncarregado;
   const podeCriarVaga = isProfessor || isCoordenacao;
   const podeAlterarEstado = isProfessor || isCoordenacao;
+  const podeResponderConvites = isEncarregado || (isAluno && !isMenor);
 
   const [estudios, setEstudios] = useState<EstudioOption[]>(normalizarEstudiosMock());
   const [professoresBd, setProfessoresBd] = useState<ProfessorCoachingOption[]>([]);
@@ -773,7 +793,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
   }, [isAluno, isEncarregado, currentUser.perfilId, alunosAssociados]);
 
   const convitesPendentes = useMemo(() => {
-    if (idsAlunoAtual.length === 0) return [] as PedidoCoaching[];
+    if (!podeResponderConvites || idsAlunoAtual.length === 0) return [] as PedidoCoaching[];
 
     return pedidos.filter((pedido) =>
       pedido.convidados.some(
@@ -781,7 +801,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
           idsAlunoAtual.includes(convidado.alunoId) && convidado.estado === 'PENDENTE'
       )
     );
-  }, [pedidos, idsAlunoAtual]);
+  }, [pedidos, idsAlunoAtual, podeResponderConvites]);
 
   const horaFimPreferida = adicionarUmaHora(pedidoForm.horaPreferida);
   const diaPreferido = pedidoForm.dataPreferida
@@ -819,6 +839,8 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
   function abrirEdicaoPedido(pedido: PedidoCoaching) {
     setPedidoEditandoId(pedido.id);
 
+    const { dataPreferida, horaPreferida } = parsePreferenciaHorario(pedido.preferenciaHorario);
+
     setPedidoForm({
       alunoId: pedido.alunoId,
       alunoNome: pedido.alunoNome,
@@ -830,8 +852,8 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
         id: convidado.alunoId,
         nome: convidado.alunoNome,
       })),
-      dataPreferida: '',
-      horaPreferida: '',
+      dataPreferida,
+      horaPreferida,
       observacoes: pedido.observacoes,
     });
     setModalPedidoAberta(true);
@@ -2013,7 +2035,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
                     </button>
                   )}
 
-                  {(isAluno || isEncarregado) && pedido.estado === 'AGUARDA_ALUNO' && (
+                  {podeResponderConvites && pedido.estado === 'AGUARDA_ALUNO' && (
                     <>
                       <button
                         onClick={() => void responderAlteracoes(pedido, true)}
