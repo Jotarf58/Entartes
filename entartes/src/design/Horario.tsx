@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   CalendarDays,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Edit3,
   Filter,
@@ -244,6 +246,36 @@ function normalizarTextoComparacao(value: string) {
     .trim();
 }
 
+function inicioDaSemana(data: Date) {
+  const resultado = new Date(data);
+  resultado.setHours(0, 0, 0, 0);
+  const offset = (resultado.getDay() + 6) % 7;
+  resultado.setDate(resultado.getDate() - offset);
+  return resultado;
+}
+
+function adicionarDias(data: Date, dias: number) {
+  const resultado = new Date(data);
+  resultado.setDate(resultado.getDate() + dias);
+  return resultado;
+}
+
+function formatarDiaMes(data: Date) {
+  return `${String(data.getDate()).padStart(2, '0')}/${String(data.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function formatarDiaMesAno(data: Date) {
+  return `${formatarDiaMes(data)}/${data.getFullYear()}`;
+}
+
+function mesmoDia(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
 function aulaPertenceAoProfessor(aula: Aula, currentUser: CurrentUser) {
   const professorAtualId = currentUser.perfilId || currentUser.contaId || '';
   const nomeProfessorAtual = normalizarTextoComparacao(currentUser.name);
@@ -361,6 +393,18 @@ export default function Horario({ currentUser }: { currentUser: CurrentUser }) {
   const [aulaDetalhe, setAulaDetalhe] = useState<Aula | null>(null);
   const [inscricoesSolicitadas, setInscricoesSolicitadas] = useState<string[]>([]);
   const [alteracoesSolicitadas, setAlteracoesSolicitadas] = useState<string[]>([]);
+  const [semanaBase, setSemanaBase] = useState(() => inicioDaSemana(new Date()));
+
+  const hojeData = useMemo(() => {
+    const data = new Date();
+    data.setHours(0, 0, 0, 0);
+    return data;
+  }, []);
+
+  const datasSemana = useMemo(
+    () => diasSemana.map((_, indice) => adicionarDias(semanaBase, indice)),
+    [semanaBase]
+  );
   const [textoAlteracao, setTextoAlteracao] = useState('');
 
   useEffect(() => {
@@ -764,19 +808,58 @@ export default function Horario({ currentUser }: { currentUser: CurrentUser }) {
       </section>
 
       <section className="bg-white rounded-2xl shadow-sm border border-[#e8f0ed] overflow-hidden">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-4 border-b border-[#e8f0ed] bg-white">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSemanaBase((atual) => adicionarDias(atual, -7))}
+              className="p-2 rounded-lg border border-[#d9e8e1] text-[#2d5f4f] hover:bg-[#f0f6f3]"
+              aria-label="Semana anterior"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+
+            <button
+              onClick={() => setSemanaBase(inicioDaSemana(new Date()))}
+              className="px-4 py-2 rounded-lg border border-[#d9e8e1] text-[#2d5f4f] hover:bg-[#f0f6f3] text-sm"
+            >
+              Hoje
+            </button>
+
+            <button
+              onClick={() => setSemanaBase((atual) => adicionarDias(atual, 7))}
+              className="p-2 rounded-lg border border-[#d9e8e1] text-[#2d5f4f] hover:bg-[#f0f6f3]"
+              aria-label="Semana seguinte"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+
+          <p className="text-[#2d5f4f]">
+            {formatarDiaMes(datasSemana[0])} – {formatarDiaMesAno(datasSemana[datasSemana.length - 1])}
+          </p>
+        </div>
+
         <div className="overflow-x-auto">
           <div className="min-w-[1100px]">
             <div className="grid grid-cols-[80px_repeat(6,minmax(160px,1fr))] border-b border-[#e8f0ed] bg-[#f8faf9]">
               <div className="p-4 border-r border-[#e8f0ed]" />
 
-              {diasSemana.map((dia) => (
-                <div
-                  key={dia}
-                  className="p-4 text-center border-r last:border-r-0 border-[#e8f0ed]"
-                >
-                  <p className="text-[#2d5f4f]">{dia.replace('-feira', '')}</p>
-                </div>
-              ))}
+              {diasSemana.map((dia, indice) => {
+                const dataDia = datasSemana[indice];
+                const ehHoje = mesmoDia(dataDia, hojeData);
+
+                return (
+                  <div
+                    key={dia}
+                    className={`p-4 text-center border-r last:border-r-0 border-[#e8f0ed] ${
+                      ehHoje ? 'bg-[#d4e8df]' : ''
+                    }`}
+                  >
+                    <p className="text-[#2d5f4f]">{dia.replace('-feira', '')}</p>
+                    <p className="text-xs text-[#7a9a8c] mt-1">{formatarDiaMes(dataDia)}</p>
+                  </div>
+                );
+              })}
             </div>
 
             {horasGrelha.map((hora) => (
@@ -788,16 +871,20 @@ export default function Horario({ currentUser }: { currentUser: CurrentUser }) {
                   {hora}
                 </div>
 
-                {diasSemana.map((dia) => {
+                {diasSemana.map((dia, indice) => {
                   const aulasCelula = aulasFiltradas.filter(
                     (aula) =>
                       aula.diaSemana === dia && getHoraBase(aula.horaInicio) === hora
                   );
 
+                  const ehColunaHoje = mesmoDia(datasSemana[indice], hojeData);
+
                   return (
                     <div
                       key={`${dia}-${hora}`}
-                      className="p-2 border-r last:border-r-0 border-[#e8f0ed] bg-white"
+                      className={`p-2 border-r last:border-r-0 border-[#e8f0ed] ${
+                        ehColunaHoje ? 'bg-[#f0f6f3]' : 'bg-white'
+                      }`}
                     >
                       <div className="space-y-2">
                         {aulasCelula.map((aula) => {

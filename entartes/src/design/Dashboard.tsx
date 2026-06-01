@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import {
   AlertCircle,
@@ -7,23 +7,26 @@ import {
   CalendarDays,
   Clock,
   DoorOpen,
-  Shirt,
   ShoppingBag,
   Users,
 } from 'lucide-react';
 
+import { Toast, inferirTipoMensagem, limparMensagemBackend, type ToastData } from '../components/Toast';
 import {
-  aulasSemanais,
-  eventosMock,
-  feriadosEInterrupcoesMock,
-  figurinosAcessoriosMock,
-  pedidosCoachingMock,
-  salas,
-  vagasCoachingMock,
-  type DiaSemana,
-  type EstadoPedidoCoaching,
-  type TipoFigurinoAcessorio,
-} from '../data/mockEntartes';
+  listarAulasSemanais,
+  type AulaSemanalApp,
+} from '../services/horarioService';
+import {
+  listarPedidosCoaching,
+  listarVagasCoaching,
+  type EstadoPedidoCoachingBackend,
+  type PedidoCoachingApp,
+  type VagaCoachingApp,
+} from '../services/coachingService';
+import { listarEventos, type EventoApp } from '../services/eventosService';
+import { listarInventario, type MarketplaceItemApp } from '../services/inventarioService';
+import { listarEstudios, type EstudioApp } from '../services/estudiosService';
+import { listarInterrupcoes, type InterrupcaoApp } from '../services/interrupcoesService';
 
 type UserRole = 'ALUNO' | 'ENCARREGADO' | 'PROFESSOR' | 'COORDENACAO';
 
@@ -36,6 +39,9 @@ type Page =
   | 'coordenacao';
 
 type CurrentUser = {
+  contaId?: string;
+  perfilId?: string;
+  email?: string;
   name: string;
   role: UserRole;
   roleLabel: string;
@@ -51,13 +57,14 @@ type QuickAction = {
   badge?: string;
 };
 
-const diasOrdem: DiaSemana[] = [
+const diasOrdem = [
   'Segunda-feira',
   'Terça-feira',
   'Quarta-feira',
   'Quinta-feira',
   'Sexta-feira',
   'Sábado',
+  'Domingo',
 ];
 
 const modalidadeColors: Record<string, string> = {
@@ -75,65 +82,56 @@ const modalidadeColors: Record<string, string> = {
   'Personal Training': '#e0f2fe',
 };
 
-const estadoPedidoLabel: Record<EstadoPedidoCoaching, string> = {
+const estadoPedidoLabel: Record<EstadoPedidoCoachingBackend, string> = {
   PENDENTE: 'Pendente',
   EM_ANALISE: 'Em análise',
+  INTERESSE_REGISTADO: 'Interesse registado',
+  ACEITE_PROFESSOR: 'Aceite pelo professor',
   AGENDADO: 'Agendado',
   APROVADO: 'Aprovado',
   REJEITADO: 'Rejeitado',
 };
 
-const estadoPedidoStyle: Record<EstadoPedidoCoaching, string> = {
+const estadoPedidoStyle: Record<EstadoPedidoCoachingBackend, string> = {
   PENDENTE: 'bg-[#fff4d4] text-[#8a6d1d]',
   EM_ANALISE: 'bg-[#d4e8ff] text-[#2d5f7f]',
-  AGENDADO: 'bg-[#e8d4ff] text-[#5a3c7a]',
+  INTERESSE_REGISTADO: 'bg-[#d4e8ff] text-[#2d5f7f]',
+  ACEITE_PROFESSOR: 'bg-[#e8d4ff] text-[#5a3c7a]',
+  AGENDADO: 'bg-[#f0e4ff] text-[#5a3c7a]',
   APROVADO: 'bg-[#d4e8df] text-[#2d5f4f]',
   REJEITADO: 'bg-[#ffe0e0] text-[#9a3a3a]',
 };
 
-const tipoFigurinoLabel: Record<TipoFigurinoAcessorio, string> = {
-  FIGURINO: 'Figurino',
-  ACESSORIO: 'Acessório',
-  CALCADO: 'Calçado',
-  MAQUILHAGEM: 'Maquilhagem',
-  OUTRO: 'Outro',
-};
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return 'Ocorreu um erro ao carregar a dashboard.';
+}
 
 function formatDate(date: string) {
+  if (!date) return 'A definir';
+
+  const parsedDate = new Date(date);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return date;
+  }
+
   return new Intl.DateTimeFormat('pt-PT', {
     day: '2-digit',
     month: 'short',
     year: 'numeric',
-  }).format(new Date(date));
-}
-
-function ordenarAulas() {
-  return [...aulasSemanais].sort((a, b) => {
-    const diaA = diasOrdem.indexOf(a.diaSemana);
-    const diaB = diasOrdem.indexOf(b.diaSemana);
-
-    if (diaA !== diaB) {
-      return diaA - diaB;
-    }
-
-    return a.horaInicio.localeCompare(b.horaInicio);
-  });
+  }).format(parsedDate);
 }
 
 function getDashboardTitle(user: CurrentUser) {
-  if (user.role === 'ALUNO') {
-    return `Bem-vinda, ${user.name}`;
+  if (user.role === 'COORDENACAO') {
+    return 'Dashboard da Coordenação';
   }
 
-  if (user.role === 'ENCARREGADO') {
-    return `Bem-vindo, ${user.name}`;
-  }
-
-  if (user.role === 'PROFESSOR') {
-    return `Bem-vinda, Professora ${user.name}`;
-  }
-
-  return 'Dashboard da Coordenação';
+  return `Bem-vindo, ${user.name}`;
 }
 
 function getDashboardSubtitle(user: CurrentUser) {
@@ -153,90 +151,30 @@ function getDashboardSubtitle(user: CurrentUser) {
 }
 
 function getQuickActions(user: CurrentUser): QuickAction[] {
-  if (user.role === 'ALUNO') {
+  if (user.role === 'COORDENACAO') {
     return [
       {
-        title: 'Ver horário',
-        description: 'Consultar aulas disponíveis e associadas.',
+        title: 'Coordenação',
+        description: 'Gerir pedidos, salas, vagas e interrupções.',
+        page: 'coordenacao',
+        icon: <DoorOpen className="w-5 h-5 text-[#2d5f4f]" />,
+        badge: 'Gestão',
+      },
+      {
+        title: 'Gerir horário',
+        description: 'Criar, editar ou remover aulas.',
         page: 'horario',
         icon: <Clock className="w-5 h-5 text-[#2d5f4f]" />,
       },
       {
-        title: 'Novo pedido de coaching',
-        description: 'Criar ou acompanhar pedidos de coaching.',
+        title: 'Coaching',
+        description: 'Gerir pedidos e disponibilidades.',
         page: 'coaching',
         icon: <Users className="w-5 h-5 text-[#2d5f4f]" />,
-        badge: 'Pedido',
-      },
-      {
-        title: 'Marketplace',
-        description: 'Solicitar aluguer de figurinos/acessórios.',
-        page: 'marketplace',
-        icon: <ShoppingBag className="w-5 h-5 text-[#2d5f4f]" />,
       },
       {
         title: 'Eventos',
-        description: 'Ver comunicados, figurinos e apresentações.',
-        page: 'eventos',
-        icon: <CalendarDays className="w-5 h-5 text-[#2d5f4f]" />,
-      },
-    ];
-  }
-
-  if (user.role === 'ENCARREGADO') {
-    return [
-      {
-        title: 'Horário do educando',
-        description: 'Consultar aulas e opções disponíveis.',
-        page: 'horario',
-        icon: <Clock className="w-5 h-5 text-[#2d5f4f]" />,
-      },
-      {
-        title: 'Pedido de coaching',
-        description: 'Criar pedidos para o educando.',
-        page: 'coaching',
-        icon: <Users className="w-5 h-5 text-[#2d5f4f]" />,
-        badge: 'Criar',
-      },
-      {
-        title: 'Publicar figurino',
-        description: 'Publicar ou solicitar figurinos/acessórios.',
-        page: 'marketplace',
-        icon: <ShoppingBag className="w-5 h-5 text-[#2d5f4f]" />,
-      },
-      {
-        title: 'Autorizações',
-        description: 'Ver eventos, formulários e autorizações.',
-        page: 'eventos',
-        icon: <CalendarDays className="w-5 h-5 text-[#2d5f4f]" />,
-      },
-    ];
-  }
-
-  if (user.role === 'PROFESSOR') {
-    return [
-      {
-        title: 'Meu horário',
-        description: 'Ver as minhas aulas e pedir alterações.',
-        page: 'horario',
-        icon: <Clock className="w-5 h-5 text-[#2d5f4f]" />,
-      },
-      {
-        title: 'Disponibilidades',
-        description: 'Criar vagas para coaching.',
-        page: 'coaching',
-        icon: <CalendarCheck2 className="w-5 h-5 text-[#2d5f4f]" />,
-        badge: 'Coaching',
-      },
-      {
-        title: 'Marketplace',
-        description: 'Publicar ou consultar materiais.',
-        page: 'marketplace',
-        icon: <ShoppingBag className="w-5 h-5 text-[#2d5f4f]" />,
-      },
-      {
-        title: 'Eventos',
-        description: 'Consultar eventos e comunicados.',
+        description: 'Criar e gerir eventos/comunicados.',
         page: 'eventos',
         icon: <CalendarDays className="w-5 h-5 text-[#2d5f4f]" />,
       },
@@ -245,27 +183,35 @@ function getQuickActions(user: CurrentUser): QuickAction[] {
 
   return [
     {
-      title: 'Coordenação',
-      description: 'Gerir pedidos, salas, vagas e interrupções.',
-      page: 'coordenacao',
-      icon: <DoorOpen className="w-5 h-5 text-[#2d5f4f]" />,
-      badge: 'Gestão',
-    },
-    {
-      title: 'Gerir horário',
-      description: 'Criar, editar ou remover aulas.',
+      title: user.role === 'PROFESSOR' ? 'Meu horário' : 'Ver horário',
+      description: 'Consultar a grelha semanal de aulas.',
       page: 'horario',
       icon: <Clock className="w-5 h-5 text-[#2d5f4f]" />,
     },
     {
-      title: 'Coaching',
-      description: 'Gerir pedidos e disponibilidades.',
+      title: user.role === 'PROFESSOR' ? 'Disponibilidades' : 'Pedido de coaching',
+      description:
+        user.role === 'PROFESSOR'
+          ? 'Criar vagas e gerir pedidos de coaching.'
+          : 'Criar ou acompanhar pedidos de coaching.',
       page: 'coaching',
-      icon: <Users className="w-5 h-5 text-[#2d5f4f]" />,
+      icon:
+        user.role === 'PROFESSOR' ? (
+          <CalendarCheck2 className="w-5 h-5 text-[#2d5f4f]" />
+        ) : (
+          <Users className="w-5 h-5 text-[#2d5f4f]" />
+        ),
+      badge: 'Coaching',
+    },
+    {
+      title: 'Marketplace',
+      description: 'Consultar e solicitar figurinos/acessórios.',
+      page: 'marketplace',
+      icon: <ShoppingBag className="w-5 h-5 text-[#2d5f4f]" />,
     },
     {
       title: 'Eventos',
-      description: 'Criar e gerir eventos/comunicados.',
+      description: 'Ver comunicados, formulários e apresentações.',
       page: 'eventos',
       icon: <CalendarDays className="w-5 h-5 text-[#2d5f4f]" />,
     },
@@ -284,42 +230,151 @@ export default function Dashboard({
   const isProfessor = currentUser.role === 'PROFESSOR';
   const isCoordenacao = currentUser.role === 'COORDENACAO';
 
+  const perfilId = currentUser.perfilId ?? currentUser.contaId ?? '';
+
+  const [aulas, setAulas] = useState<AulaSemanalApp[]>([]);
+  const [pedidos, setPedidos] = useState<PedidoCoachingApp[]>([]);
+  const [vagas, setVagas] = useState<VagaCoachingApp[]>([]);
+  const [eventos, setEventos] = useState<EventoApp[]>([]);
+  const [itens, setItens] = useState<MarketplaceItemApp[]>([]);
+  const [estudios, setEstudios] = useState<EstudioApp[]>([]);
+  const [interrupcoes, setInterrupcoes] = useState<InterrupcaoApp[]>([]);
+  const [toast, setToast] = useState<ToastData | null>(null);
+
+  useEffect(() => {
+    let ativo = true;
+
+    async function carregar() {
+      const [
+        aulasResult,
+        pedidosResult,
+        vagasResult,
+        eventosResult,
+        itensResult,
+        estudiosResult,
+        interrupcoesResult,
+      ] = await Promise.allSettled([
+        listarAulasSemanais(),
+        listarPedidosCoaching(),
+        listarVagasCoaching(),
+        listarEventos(),
+        listarInventario(),
+        listarEstudios(),
+        listarInterrupcoes(),
+      ]);
+
+      if (!ativo) return;
+
+      if (aulasResult.status === 'fulfilled') setAulas(aulasResult.value);
+      if (pedidosResult.status === 'fulfilled') setPedidos(pedidosResult.value);
+      if (vagasResult.status === 'fulfilled') setVagas(vagasResult.value);
+      if (eventosResult.status === 'fulfilled') setEventos(eventosResult.value);
+      if (itensResult.status === 'fulfilled') setItens(itensResult.value);
+      if (estudiosResult.status === 'fulfilled') setEstudios(estudiosResult.value);
+      if (interrupcoesResult.status === 'fulfilled') setInterrupcoes(interrupcoesResult.value);
+
+      const falhou = [
+        aulasResult,
+        pedidosResult,
+        vagasResult,
+        eventosResult,
+        itensResult,
+        estudiosResult,
+      ].find((resultado) => resultado.status === 'rejected');
+
+      if (falhou && falhou.status === 'rejected') {
+        const mensagem = limparMensagemBackend(
+          `Não foi possível carregar parte da dashboard. ${getErrorMessage(falhou.reason)}`
+        );
+        setToast({ mensagem, tipo: inferirTipoMensagem(mensagem) });
+      }
+    }
+
+    void carregar();
+
+    return () => {
+      ativo = false;
+    };
+  }, []);
+
   const quickActions = getQuickActions(currentUser);
 
-  const aulasOrdenadas = ordenarAulas();
+  const aulasOrdenadas = useMemo(() => {
+    return [...aulas].sort((a, b) => {
+      const diaA = diasOrdem.indexOf(a.diaSemana);
+      const diaB = diasOrdem.indexOf(b.diaSemana);
 
-  const aulasVisiveis = isProfessor
-    ? aulasOrdenadas.filter((aula) => aula.professorNome === currentUser.name)
-    : aulasOrdenadas;
+      if (diaA !== diaB) {
+        return diaA - diaB;
+      }
 
-  const pedidosVisiveis = pedidosCoachingMock.filter((pedido) => {
-    if (isAluno) {
-      return pedido.alunoNome === currentUser.name;
-    }
+      return a.horaInicio.localeCompare(b.horaInicio);
+    });
+  }, [aulas]);
 
-    if (isEncarregado) {
-      return pedido.encarregadoNome === currentUser.name;
-    }
+  const aulasVisiveis = useMemo(() => {
+    if (!isProfessor) return aulasOrdenadas;
 
+    return aulasOrdenadas.filter(
+      (aula) => aula.professorId === perfilId || aula.professorNome === currentUser.name
+    );
+  }, [aulasOrdenadas, isProfessor, perfilId, currentUser.name]);
+
+  const pedidosVisiveis = useMemo(() => {
+    return pedidos.filter((pedido) => {
+      if (isAluno) {
+        return pedido.alunoId === perfilId || pedido.alunoNome === currentUser.name;
+      }
+
+      if (isEncarregado) {
+        return pedido.encarregadoId === perfilId || pedido.encarregadoNome === currentUser.name;
+      }
+
+      if (isProfessor) {
+        return (
+          !pedido.professorId ||
+          pedido.professorId === perfilId ||
+          pedido.professorNome === currentUser.name
+        );
+      }
+
+      return true;
+    });
+  }, [pedidos, isAluno, isEncarregado, isProfessor, perfilId, currentUser.name]);
+
+  const vagasVisiveis = useMemo(() => {
     if (isProfessor) {
-      return pedido.professorPreferencialNome === currentUser.name;
+      return vagas.filter(
+        (vaga) => vaga.professorId === perfilId || vaga.professorNome === currentUser.name
+      );
     }
 
-    return true;
-  });
+    return vagas.filter((vaga) => vaga.estado === 'ABERTA');
+  }, [vagas, isProfessor, perfilId, currentUser.name]);
 
-  const eventosAtivos = eventosMock.filter((evento) => evento.estado === 'ATIVO');
-  const proximoFeriado = feriadosEInterrupcoesMock[feriadosEInterrupcoesMock.length - 1];
-  const figurinosDisponiveis = figurinosAcessoriosMock.slice(0, 4);
+  const eventosAtivos = useMemo(
+    () => eventos.filter((evento) => evento.estado === 'ATIVO'),
+    [eventos]
+  );
 
-  const vagasVisiveis = isProfessor
-    ? vagasCoachingMock.filter((vaga) => vaga.professorNome === currentUser.name)
-    : vagasCoachingMock.filter((vaga) => vaga.estado === 'ABERTA');
+  const proximaInterrupcao = useMemo(() => {
+    const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0);
+
+    return [...interrupcoes]
+      .filter((item) => {
+        const data = new Date(`${item.data}T00:00:00`);
+        return !Number.isNaN(data.getTime()) && data.getTime() >= hoje.getTime();
+      })
+      .sort((a, b) => a.data.localeCompare(b.data))[0];
+  }, [interrupcoes]);
 
   const pedidosPendentes = pedidosVisiveis.filter((pedido) => pedido.estado === 'PENDENTE');
 
   return (
     <div className="p-8 max-w-[1500px] mx-auto">
+      <Toast toast={toast} onClose={() => setToast(null)} />
+
       <div className="mb-8">
         <div className="flex flex-wrap items-center gap-3 mb-3">
           <span className="px-3 py-1 rounded-full bg-[#d4e8df] text-[#2d5f4f] text-sm">
@@ -378,11 +433,8 @@ export default function Dashboard({
 
             <div className="flex-1">
               <p className="text-[#2d5f4f]">
-                {evento.titulo} — {formatDate(evento.data)}, {evento.local}
-              </p>
-
-              <p className="text-sm text-[#7a9a8c] mt-1">
-                Apresentações: {evento.sessoes.join(' / ')}
+                {evento.titulo} — {formatDate(evento.data)}
+                {evento.local ? `, ${evento.local}` : ''}
               </p>
             </div>
 
@@ -390,18 +442,18 @@ export default function Dashboard({
           </button>
         ))}
 
-        {proximoFeriado && (
+        {proximaInterrupcao && (
           <div className="p-4 rounded-xl border flex items-start gap-3 bg-[#fff9f0] border-[#ffe4b8]">
             <AlertCircle className="w-5 h-5 mt-0.5 text-[#f39c12]" />
 
             <div className="flex-1">
               <p className="text-[#2d5f4f]">
-                {proximoFeriado.nome} — {formatDate(proximoFeriado.data)}
+                {proximaInterrupcao.nome} — {formatDate(proximaInterrupcao.data)}
               </p>
 
               <p className="text-sm text-[#7a9a8c] mt-1">
-                {proximoFeriado.tipo}
-                {proximoFeriado.escolaEncerrada ? ' · Escola encerrada' : ''}
+                {proximaInterrupcao.tipo}
+                {proximaInterrupcao.escolaEncerrada ? ' · Escola encerrada' : ''}
               </p>
             </div>
           </div>
@@ -428,7 +480,7 @@ export default function Dashboard({
         <SummaryCard
           icon={<ShoppingBag className="w-5 h-5 text-[#2d5f4f]" />}
           label="Marketplace"
-          value={figurinosAcessoriosMock.length}
+          value={itens.length}
           color="bg-[#fff4d4]"
           onClick={() => onNavigate('marketplace')}
         />
@@ -450,40 +502,44 @@ export default function Dashboard({
             onClick={() => onNavigate('horario')}
           />
 
-          <div className="space-y-3">
-            {aulasVisiveis.slice(0, 4).map((aula) => (
-              <button
-                key={aula.id}
-                onClick={() => onNavigate('horario')}
-                className="w-full text-left p-4 rounded-xl border border-[#e8f0ed] hover:shadow-sm transition-shadow"
-                style={{
-                  backgroundColor: `${modalidadeColors[aula.modalidade] ?? '#d4e8df'}33`,
-                }}
-              >
-                <div className="flex items-start justify-between mb-2 gap-3">
-                  <div>
-                    <p className="text-[#2d5f4f] mb-1">{aula.modalidade}</p>
-                    <p className="text-sm text-[#7a9a8c]">
-                      {aula.turma}
-                      {aula.idade ? ` · ${aula.idade}` : ''}
-                    </p>
+          {aulasVisiveis.length === 0 ? (
+            <p className="text-[#7a9a8c]">Não existem aulas para mostrar.</p>
+          ) : (
+            <div className="space-y-3">
+              {aulasVisiveis.slice(0, 4).map((aula) => (
+                <button
+                  key={aula.id}
+                  onClick={() => onNavigate('horario')}
+                  className="w-full text-left p-4 rounded-xl border border-[#e8f0ed] hover:shadow-sm transition-shadow"
+                  style={{
+                    backgroundColor: `${modalidadeColors[aula.modalidade] ?? '#d4e8df'}33`,
+                  }}
+                >
+                  <div className="flex items-start justify-between mb-2 gap-3">
+                    <div>
+                      <p className="text-[#2d5f4f] mb-1">{aula.modalidade}</p>
+                      <p className="text-sm text-[#7a9a8c]">
+                        {aula.turma}
+                        {aula.faixaEtaria ? ` · ${aula.faixaEtaria}` : ''}
+                      </p>
+                    </div>
+
+                    <span className="px-3 py-1 bg-white rounded-lg text-sm text-[#2d5f4f] border border-[#e8f0ed] whitespace-nowrap">
+                      {aula.horaInicio}
+                    </span>
                   </div>
 
-                  <span className="px-3 py-1 bg-white rounded-lg text-sm text-[#2d5f4f] border border-[#e8f0ed] whitespace-nowrap">
-                    {aula.horaInicio}
-                  </span>
-                </div>
+                  <p className="text-sm text-[#7a9a8c]">
+                    {aula.diaSemana} · {aula.salaNome}
+                  </p>
 
-                <p className="text-sm text-[#7a9a8c]">
-                  {aula.diaSemana} · {aula.salaNome}
-                </p>
-
-                {!isProfessor && (
-                  <p className="text-xs text-[#7a9a8c] mt-1">{aula.professorNome}</p>
-                )}
-              </button>
-            ))}
-          </div>
+                  {!isProfessor && (
+                    <p className="text-xs text-[#7a9a8c] mt-1">{aula.professorNome}</p>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
         </section>
 
         <section className="bg-white rounded-2xl shadow-sm border border-[#e8f0ed] p-6">
@@ -497,7 +553,7 @@ export default function Dashboard({
             <p className="text-[#7a9a8c]">Não existem pedidos associados a este perfil.</p>
           ) : (
             <div className="space-y-3">
-              {pedidosVisiveis.map((pedido) => (
+              {pedidosVisiveis.slice(0, 5).map((pedido) => (
                 <button
                   key={pedido.id}
                   onClick={() => onNavigate('coaching')}
@@ -505,7 +561,7 @@ export default function Dashboard({
                 >
                   <div className="flex items-start justify-between mb-2 gap-3">
                     <div>
-                      <p className="text-[#2d5f4f] mb-1">{pedido.alunoNome}</p>
+                      <p className="text-[#2d5f4f] mb-1">{pedido.alunoNome || pedido.alunoId}</p>
                       <p className="text-sm text-[#7a9a8c]">
                         {pedido.modalidade} · {pedido.tipoCoaching}
                       </p>
@@ -521,11 +577,8 @@ export default function Dashboard({
                   </div>
 
                   <p className="text-sm text-[#7a9a8c]">
-                    Professor preferencial: {pedido.professorPreferencialNome}
-                  </p>
-
-                  <p className="text-xs text-[#7a9a8c] mt-1">
-                    Preferência: {pedido.preferenciaHorario}
+                    Professor:{' '}
+                    {pedido.professorNome || pedido.professorPreferencialNome || 'Sem preferência'}
                   </p>
                 </button>
               ))}
@@ -542,32 +595,31 @@ export default function Dashboard({
             onClick={() => onNavigate('eventos')}
           />
 
-          <div className="space-y-3">
-            {eventosAtivos.map((evento) => (
-              <button
-                key={evento.id}
-                onClick={() => onNavigate('eventos')}
-                className="w-full text-left p-4 rounded-xl border border-[#e8f0ed] bg-[#f8faf9] hover:bg-[#f0f6f3] transition-colors"
-              >
-                <p className="text-[#2d5f4f] mb-2">{evento.titulo}</p>
+          {eventosAtivos.length === 0 ? (
+            <p className="text-[#7a9a8c]">Não existem eventos ativos.</p>
+          ) : (
+            <div className="space-y-3">
+              {eventosAtivos.map((evento) => (
+                <button
+                  key={evento.id}
+                  onClick={() => onNavigate('eventos')}
+                  className="w-full text-left p-4 rounded-xl border border-[#e8f0ed] bg-[#f8faf9] hover:bg-[#f0f6f3] transition-colors"
+                >
+                  <p className="text-[#2d5f4f] mb-2">{evento.titulo}</p>
 
-                <div className="flex flex-wrap items-center gap-3 text-sm text-[#7a9a8c]">
-                  <span>{formatDate(evento.data)}</span>
-                  <span>•</span>
-                  <span>{evento.local}</span>
-                  <span>•</span>
-                  <span>{evento.sessoes.join(' / ')}</span>
-                </div>
-
-                {evento.figurino.length > 0 && (
-                  <div className="mt-3 flex items-center gap-2 text-sm text-[#5a7a6c]">
-                    <Shirt className="w-4 h-4 text-[#2d5f4f]" />
-                    <span>Inclui indicações de figurino</span>
+                  <div className="flex flex-wrap items-center gap-3 text-sm text-[#7a9a8c]">
+                    <span>{formatDate(evento.data)}</span>
+                    {evento.local && (
+                      <>
+                        <span>•</span>
+                        <span>{evento.local}</span>
+                      </>
+                    )}
                   </div>
-                )}
-              </button>
-            ))}
-          </div>
+                </button>
+              ))}
+            </div>
+          )}
         </section>
 
         <section className="bg-white rounded-2xl shadow-sm border border-[#e8f0ed] p-6">
@@ -577,33 +629,30 @@ export default function Dashboard({
             onClick={() => onNavigate('marketplace')}
           />
 
-          <div className="space-y-3">
-            {figurinosDisponiveis.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => onNavigate('marketplace')}
-                className="w-full text-left p-4 rounded-xl border border-[#e8f0ed] hover:bg-[#f8faf9] transition-colors"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-[#2d5f4f] mb-1">{item.nome}</p>
-                    <p className="text-sm text-[#7a9a8c]">
-                      {tipoFigurinoLabel[item.tipo]} · {item.modalidade}
-                    </p>
+          {itens.length === 0 ? (
+            <p className="text-[#7a9a8c]">Ainda não existem materiais no marketplace.</p>
+          ) : (
+            <div className="space-y-3">
+              {itens.slice(0, 4).map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => onNavigate('marketplace')}
+                  className="w-full text-left p-4 rounded-xl border border-[#e8f0ed] hover:bg-[#f8faf9] transition-colors"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[#2d5f4f] mb-1">{item.nome}</p>
+                      <p className="text-sm text-[#7a9a8c]">{item.modalidade}</p>
+                    </div>
+
+                    <span className="px-3 py-1 rounded-lg text-sm bg-[#d4e8df] text-[#2d5f4f] whitespace-nowrap">
+                      {item.estadoAnuncio === 'RESERVADO' ? 'Alugado' : 'Disponível'}
+                    </span>
                   </div>
-
-                  <span className="px-3 py-1 rounded-lg text-sm bg-[#d4e8df] text-[#2d5f4f] whitespace-nowrap">
-                    Disponível
-                  </span>
-                </div>
-
-                <p className="text-xs text-[#7a9a8c] mt-2">
-                  {formatDate(item.dataInicioDisponibilidade)} a{' '}
-                  {formatDate(item.dataFimDisponibilidade)}
-                </p>
-              </button>
-            ))}
-          </div>
+                </button>
+              ))}
+            </div>
+          )}
         </section>
       </div>
 
@@ -619,7 +668,7 @@ export default function Dashboard({
             <p className="text-[#7a9a8c]">Não existem vagas associadas a este perfil.</p>
           ) : (
             <div className="space-y-3">
-              {vagasVisiveis.map((vaga) => (
+              {vagasVisiveis.slice(0, 5).map((vaga) => (
                 <button
                   key={vaga.id}
                   onClick={() => onNavigate('coaching')}
@@ -632,7 +681,7 @@ export default function Dashboard({
                     </div>
 
                     <span className="px-3 py-1 rounded-lg text-sm bg-[#d4e8ff] text-[#2d5f4f]">
-                      {vaga.repeticao}
+                      {vaga.estado === 'ABERTA' ? 'Aberta' : 'Fechada'}
                     </span>
                   </div>
 
@@ -652,25 +701,31 @@ export default function Dashboard({
             onClick={() => onNavigate(isCoordenacao ? 'coordenacao' : 'horario')}
           />
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {salas.map((sala) => {
-              const totalAulas = aulasSemanais.filter((aula) => aula.salaId === sala.id).length;
+          {estudios.length === 0 ? (
+            <p className="text-[#7a9a8c]">Ainda não existem salas registadas.</p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {estudios.map((estudio) => {
+                const totalAulas = aulas.filter(
+                  (aula) => aula.salaId === estudio.id || aula.salaNome === estudio.nome
+                ).length;
 
-              return (
-                <button
-                  key={sala.id}
-                  onClick={() => onNavigate(isCoordenacao ? 'coordenacao' : 'horario')}
-                  className="text-left p-4 rounded-xl border border-[#e8f0ed] bg-[#f8faf9] hover:bg-[#f0f6f3] transition-colors"
-                >
-                  <p className="text-[#2d5f4f] mb-1">{sala.nome}</p>
-                  <p className="text-sm text-[#7a9a8c]">{sala.tipo}</p>
-                  <p className="text-xs text-[#7a9a8c] mt-2">
-                    {totalAulas} aulas semanais associadas
-                  </p>
-                </button>
-              );
-            })}
-          </div>
+                return (
+                  <button
+                    key={estudio.id}
+                    onClick={() => onNavigate(isCoordenacao ? 'coordenacao' : 'horario')}
+                    className="text-left p-4 rounded-xl border border-[#e8f0ed] bg-[#f8faf9] hover:bg-[#f0f6f3] transition-colors"
+                  >
+                    <p className="text-[#2d5f4f] mb-1">{estudio.nome}</p>
+                    <p className="text-sm text-[#7a9a8c]">Capacidade: {estudio.capacidade}</p>
+                    <p className="text-xs text-[#7a9a8c] mt-2">
+                      {totalAulas} aulas semanais associadas
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </section>
       </div>
 
