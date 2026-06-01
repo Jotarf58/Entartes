@@ -1,5 +1,14 @@
 const mongoose = require("mongoose");
 
+const convidadoSchema = new mongoose.Schema(
+    {
+        alunoId: { type: String, required: true },
+        alunoNome: { type: String, default: "", trim: true },
+        estado: { type: String, enum: ["PENDENTE", "ACEITE", "RECUSADO"], default: "PENDENTE" }
+    },
+    { _id: true }
+);
+
 const pedidoCoachingSchema = new mongoose.Schema(
     {
         alunoId: { type: String, required: true },
@@ -15,6 +24,7 @@ const pedidoCoachingSchema = new mongoose.Schema(
         professoresInteressados: [{ type: String }],
         tipoCoaching: { type: String, enum: ["Individual", "Grupo"], default: "Individual" },
         duracaoMinutos: { type: Number, default: 60 },
+        convidados: { type: [convidadoSchema], default: [] },
         outrosAlunosSugeridos: { type: String, default: "", trim: true },
         preferenciaHorario: { type: String, default: "", trim: true },
         observacoes: { type: String, default: "", trim: true },

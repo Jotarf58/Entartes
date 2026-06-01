@@ -25,6 +25,14 @@ class PedidoCoachingRepository {
         return await PedidoCoachingModel.findByIdAndUpdate(id, dados, { new: true, runValidators: true });
     }
 
+    async responderConvite(pedidoId, alunoId, estado) {
+        return await PedidoCoachingModel.findOneAndUpdate(
+            { _id: pedidoId, "convidados.alunoId": alunoId },
+            { $set: { "convidados.$.estado": estado } },
+            { new: true }
+        );
+    }
+
     async remover(id) {
         return await PedidoCoachingModel.findByIdAndDelete(id);
     }

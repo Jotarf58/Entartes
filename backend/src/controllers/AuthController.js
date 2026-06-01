@@ -90,6 +90,26 @@ class AuthController {
         }
     }
 
+    async listarAlunos(req, res) {
+        try {
+            const utilizadores = await this.utilizadorRepository.listarTodos();
+
+            const alunos = utilizadores.flatMap((utilizador) =>
+                (utilizador.perfis || [])
+                    .filter((perfil) => perfil.tipoPerfil === "ALUNO" && perfil.ativo !== false)
+                    .map((perfil) => ({
+                        id: String(perfil._id),
+                        nome: perfil.nome,
+                        contaId: String(utilizador._id)
+                    }))
+            );
+
+            res.status(200).json({ total: alunos.length, alunos });
+        } catch (erro) {
+            res.status(400).json({ erro: erro.message });
+        }
+    }
+
     async listar(req, res) {
         try {
             const utilizadores = await this.utilizadorRepository.listarTodos(req.query);

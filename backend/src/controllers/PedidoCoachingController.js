@@ -134,6 +134,22 @@ class PedidoCoachingController {
         }
     }
 
+    async responderConvite(req, res) {
+        try {
+            const alunoId = req.body.alunoId || req.utilizador?.perfilAtivo?.id || req.utilizador?.id;
+            const estado = req.body.estado === "ACEITE" ? "ACEITE" : "RECUSADO";
+
+            if (!alunoId) return res.status(400).json({ erro: "Aluno não identificado." });
+
+            const pedido = await this.pedidoCoachingRepository.responderConvite(req.params.id, alunoId, estado);
+            if (!pedido) return res.status(404).json({ erro: "Convite não encontrado." });
+
+            res.status(200).json({ mensagem: "Convite atualizado com sucesso.", pedido });
+        } catch (erro) {
+            res.status(400).json({ erro: erro.message });
+        }
+    }
+
     async remover(req, res) {
         try {
             const pedido = await this.pedidoCoachingRepository.remover(req.params.id);

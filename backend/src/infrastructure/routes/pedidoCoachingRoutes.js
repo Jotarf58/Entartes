@@ -30,6 +30,7 @@ router.patch("/:id/associar-vaga", authMiddleware, autorizarTipos("DIRECAO", "AD
 router.patch("/:id/interesse", authMiddleware, autorizarTipos("PROFESSOR", "DIRECAO", "ADMIN"), (req, res) => pedidoCoachingController.manifestarInteresse(req, res));
 router.patch("/:id/aceitar", authMiddleware, autorizarTipos("PROFESSOR", "DIRECAO", "ADMIN"), (req, res) => pedidoCoachingController.aceitar(req, res));
 router.patch("/:id/aprovar", authMiddleware, autorizarTipos("DIRECAO", "ADMIN"), (req, res) => pedidoCoachingController.aprovar(req, res));
+router.patch("/:id/convite", authMiddleware, (req, res) => pedidoCoachingController.responderConvite(req, res));
 router.patch("/:id/rejeitar", authMiddleware, autorizarTipos("PROFESSOR", "DIRECAO", "ADMIN"), (req, res) => pedidoCoachingController.rejeitar(req, res));
 router.delete("/:id", authMiddleware, autorizarTipos("DIRECAO", "ADMIN"), (req, res) => pedidoCoachingController.remover(req, res));
 

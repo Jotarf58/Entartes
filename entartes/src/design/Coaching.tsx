@@ -35,7 +35,9 @@ import {
   listarProfessoresCoaching,
   listarVagasCoaching,
   rejeitarPedidoCoaching,
+  responderConvitePedidoCoaching,
   solicitarVagaCoaching,
+  type ConvidadoApp,
   type EstadoPedidoCoachingBackend,
   type EstadoVagaBackend,
   type EstudioBackend,
@@ -50,7 +52,11 @@ import {
   type AulaSemanalApp,
 } from '../services/horarioService';
 import { verificarDisponibilidadeEstudio } from '../services/estudiosService';
-import { listarAlunosDaConta, type AlunoAssociado } from '../services/authService';
+import {
+  listarAlunosDaConta,
+  listarTodosOsAlunos,
+  type AlunoAssociado,
+} from '../services/authService';
 import { Toast, type ToastData } from '../components/Toast';
 import { SeletorData, SeletorHora, formatarDataPt } from '../components/Calendario';
 
@@ -88,6 +94,7 @@ type PedidoCoaching = {
   professorPreferencialNome: string;
   tipoCoaching: TipoCoaching;
   duracaoMinutos: number;
+  convidados: ConvidadoApp[];
   outrosAlunosSugeridos: string;
   preferenciaHorario: string;
   observacoes: string;
@@ -126,7 +133,7 @@ type PedidoForm = {
   professorPreferencialId: string;
   tipoCoaching: TipoCoaching;
   duracaoMinutos: number;
-  alunosConvidados: string;
+  convidados: AlunoAssociado[];
   dataPreferida: string;
   horaPreferida: string;
   observacoes: string;
@@ -415,6 +422,7 @@ function pedidoBackendParaUi(
     professorPreferencialNome: professorNome,
     tipoCoaching: pedido.tipoCoaching || 'Individual',
     duracaoMinutos: pedido.duracaoMinutos ?? 60,
+    convidados: pedido.convidados ?? [],
     outrosAlunosSugeridos: pedido.outrosAlunosSugeridos || '',
     preferenciaHorario: pedido.preferenciaHorario || pedido.horarioFinal || '',
     observacoes: pedido.observacoes || '',
@@ -484,7 +492,7 @@ function criarPedidoForm(currentUser: CurrentUser, alunos: AlunoAssociado[]): Pe
     professorPreferencialId: '',
     tipoCoaching: 'Individual',
     duracaoMinutos: 60,
-    alunosConvidados: '',
+    convidados: [],
     dataPreferida: '',
     horaPreferida: '',
     observacoes: '',
@@ -581,6 +589,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
   const [vagas, setVagas] = useState<VagaCoaching[]>([]);
   const [aulasHorario, setAulasHorario] = useState<AulaSemanalApp[]>([]);
   const [alunosAssociados, setAlunosAssociados] = useState<AlunoAssociado[]>([]);
+  const [todosAlunos, setTodosAlunos] = useState<AlunoAssociado[]>([]);
 
   const [estadoFiltro, setEstadoFiltro] = useState<'TODOS' | EstadoPedido>('TODOS');
   const [modalidadeFiltro, setModalidadeFiltro] = useState('TODAS');
@@ -657,13 +666,17 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
 
       const educandosSessao = currentUser.educandos ?? [];
 
-      const [estudiosBackend, professoresBackend, alunosBackend] = await Promise.all([
-        listarEstudios().catch(() => []),
-        listarProfessoresCoaching().catch(() => []),
-        isEncarregado && educandosSessao.length === 0
-          ? listarAlunosDaConta().catch(() => [])
-          : Promise.resolve(educandosSessao),
-      ]);
+      const [estudiosBackend, professoresBackend, alunosBackend, todosAlunosBackend] =
+        await Promise.all([
+          listarEstudios().catch(() => []),
+          listarProfessoresCoaching().catch(() => []),
+          isEncarregado && educandosSessao.length === 0
+            ? listarAlunosDaConta().catch(() => [])
+            : Promise.resolve(educandosSessao),
+          listarTodosOsAlunos().catch(() => []),
+        ]);
+
+      setTodosAlunos(todosAlunosBackend);
 
       const estudiosNormalizados = normalizarEstudiosBackend(estudiosBackend);
       const estudiosFinais = estudiosNormalizados.length > 0 ? estudiosNormalizados : normalizarEstudiosMock();
@@ -753,6 +766,23 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
   const totalAprovados = pedidosDoPerfil.filter((pedido) => pedido.estado === 'APROVADO').length;
   const totalGrupo = pedidosDoPerfil.filter((pedido) => pedido.tipoCoaching === 'Grupo').length;
 
+  const idsAlunoAtual = useMemo(() => {
+    if (isAluno) return [currentUser.perfilId ?? ''].filter(Boolean);
+    if (isEncarregado) return alunosAssociados.map((aluno) => aluno.id);
+    return [];
+  }, [isAluno, isEncarregado, currentUser.perfilId, alunosAssociados]);
+
+  const convitesPendentes = useMemo(() => {
+    if (idsAlunoAtual.length === 0) return [] as PedidoCoaching[];
+
+    return pedidos.filter((pedido) =>
+      pedido.convidados.some(
+        (convidado) =>
+          idsAlunoAtual.includes(convidado.alunoId) && convidado.estado === 'PENDENTE'
+      )
+    );
+  }, [pedidos, idsAlunoAtual]);
+
   const horaFimPreferida = adicionarUmaHora(pedidoForm.horaPreferida);
   const diaPreferido = pedidoForm.dataPreferida
     ? capitalizarDiaSemana(getDiaSemana(pedidoForm.dataPreferida))
@@ -767,13 +797,6 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
         pedidoForm.horaPreferida,
         horaFimPreferida
       )
-  );
-  const sugestoesAlunosConvidados = Array.from(
-    new Set(
-      [...alunosAssociados.map((aluno) => aluno.nome), ...pedidos.map((pedido) => pedido.alunoNome)].filter(
-        Boolean
-      )
-    )
   );
   const podeEditarPedido = (pedido: PedidoCoaching) => {
     if (isCoordenacao) {
@@ -803,7 +826,10 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
       professorPreferencialId: pedido.professorPreferencialId,
       tipoCoaching: pedido.tipoCoaching,
       duracaoMinutos: pedido.duracaoMinutos,
-      alunosConvidados: pedido.outrosAlunosSugeridos,
+      convidados: pedido.convidados.map((convidado) => ({
+        id: convidado.alunoId,
+        nome: convidado.alunoNome,
+      })),
       dataPreferida: '',
       horaPreferida: '',
       observacoes: pedido.observacoes,
@@ -967,8 +993,8 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
       return;
     }
 
-    if (pedidoForm.tipoCoaching === 'Grupo' && !pedidoForm.alunosConvidados.trim()) {
-      setMensagem('Indica os alunos convidados para um coaching de grupo.');
+    if (pedidoForm.tipoCoaching === 'Grupo' && pedidoForm.convidados.length === 0) {
+      setMensagem('Convida pelo menos um aluno para um coaching de grupo.');
       return;
     }
 
@@ -982,8 +1008,10 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
       : '';
     const alunoId = isAluno ? getPerfilId(currentUser, 'aluno') : pedidoForm.alunoId;
     const encarregadoId = isEncarregado ? getPerfilId(currentUser, 'encarregado') : '';
-    const alunosConvidados =
-      pedidoForm.tipoCoaching === 'Grupo' ? pedidoForm.alunosConvidados.trim() : '';
+    const convidados =
+      pedidoForm.tipoCoaching === 'Grupo'
+        ? pedidoForm.convidados.map((aluno) => ({ alunoId: aluno.id, alunoNome: aluno.nome }))
+        : [];
 
     const editando = Boolean(pedidoEditandoId);
     const pedidoOriginal = pedidos.find((pedido) => pedido.id === pedidoEditandoId);
@@ -1002,7 +1030,8 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
       professorNome,
       tipoCoaching: pedidoForm.tipoCoaching,
       duracaoMinutos: pedidoForm.duracaoMinutos,
-      outrosAlunosSugeridos: alunosConvidados,
+      convidados,
+      outrosAlunosSugeridos: convidados.map((convidado) => convidado.alunoNome).join(', '),
       preferenciaHorario,
       observacoes: pedidoForm.observacoes.trim(),
     };
@@ -1247,6 +1276,36 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
     }
   }
 
+  async function responderConvite(pedido: PedidoCoaching, aceitar: boolean) {
+    const convidado = pedido.convidados.find(
+      (item) => idsAlunoAtual.includes(item.alunoId) && item.estado === 'PENDENTE'
+    );
+
+    if (!convidado) return;
+
+    try {
+      setIsSaving(true);
+
+      const pedidoAtualizado = await responderConvitePedidoCoaching(pedido.id, {
+        alunoId: convidado.alunoId,
+        estado: aceitar ? 'ACEITE' : 'RECUSADO',
+      });
+
+      atualizarPedidoLocal({
+        ...pedido,
+        ...pedidoBackendParaUi(pedidoAtualizado, professoresOpcoes),
+        alunoNome: pedido.alunoNome,
+        encarregadoNome: pedido.encarregadoNome,
+      });
+
+      setMensagem(aceitar ? 'Aceitaste o convite de coaching.' : 'Recusaste o convite de coaching.');
+    } catch (error) {
+      notificar(getErrorMessage(error), 'erro');
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   async function responderAlteracoes(pedido: PedidoCoaching, aceitar: boolean) {
     try {
       setIsSaving(true);
@@ -1403,6 +1462,15 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
       return;
     }
 
+    const participantesCoaching = [
+      pedidoSelecionado.alunoNome,
+      ...pedidoSelecionado.convidados
+        .filter((convidado) => convidado.estado === 'ACEITE')
+        .map((convidado) => convidado.alunoNome),
+    ].filter(Boolean);
+    const turmaCoaching = `Coaching — ${participantesCoaching.join(', ')}`;
+    const inscritosCoaching = Math.max(1, participantesCoaching.length);
+
     const diaSemana = capitalizarDiaSemana(
       vagaSelecionada.diaSemana || getDiaSemana(vagaSelecionada.dataInicio)
     );
@@ -1430,7 +1498,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
         horaFim: vagaSelecionada.horaFim,
         modalidade: vagaSelecionada.modalidade,
         turmaId: '',
-        turma: `Coaching — ${pedidoSelecionado.alunoNome}`,
+        turma: turmaCoaching,
         professorId: vagaSelecionada.professorId,
         professorNome: vagaSelecionada.professorNome,
         salaId: vagaSelecionada.estudioId,
@@ -1438,7 +1506,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
         faixaEtaria: pedidoSelecionado.tipoAluno === 'ADULTO' ? 'Adultos' : 'Crianças/Jovens',
         tipo: 'Coaching',
         vagas: pedidoSelecionado.tipoCoaching === 'Grupo' ? 6 : 1,
-        inscritos: 1,
+        inscritos: inscritosCoaching,
         estado: 'ATIVA',
       };
 
@@ -1528,7 +1596,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
           horaInicio: vagaSelecionada.horaInicio,
           horaFim: vagaSelecionada.horaFim,
           modalidade: vagaSelecionada.modalidade,
-          turma: `Coaching — ${pedidoSelecionado.alunoNome}`,
+          turma: turmaCoaching,
           professorId: vagaSelecionada.professorId,
           professorNome: vagaSelecionada.professorNome,
           salaId: vagaSelecionada.estudioId || null,
@@ -1536,7 +1604,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
           faixaEtaria: pedidoSelecionado.tipoAluno === 'ADULTO' ? 'Adultos' : 'Crianças/Jovens',
           tipo: 'Coaching',
           vagas: pedidoSelecionado.tipoCoaching === 'Grupo' ? 6 : 1,
-          inscritos: 1,
+          inscritos: inscritosCoaching,
           estado: 'ATIVA',
         });
 
@@ -1808,6 +1876,52 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
         />
       </div>
 
+      {convitesPendentes.length > 0 && (
+        <section className="mb-8 bg-white rounded-2xl shadow-sm border border-[#ffe4b8] p-5">
+          <h2 className="text-[#2d5f4f] mb-1">Convites de coaching</h2>
+          <p className="text-sm text-[#7a9a8c] mb-4">
+            Foste convidado para estes coachings de grupo. Aceita para participares.
+          </p>
+
+          <div className="space-y-3">
+            {convitesPendentes.map((pedido) => (
+              <div
+                key={`convite-${pedido.id}`}
+                className="rounded-xl border border-[#e8f0ed] bg-[#fff9f0] p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3"
+              >
+                <div>
+                  <p className="text-[#2d5f4f]">
+                    {pedido.modalidade} · {pedido.tipoCoaching}
+                  </p>
+                  <p className="text-sm text-[#7a9a8c]">
+                    Organizado por {pedido.alunoNome} · {pedido.preferenciaHorario || 'horário a combinar'} ·{' '}
+                    {formatarDuracao(pedido.duracaoMinutos)}
+                  </p>
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => void responderConvite(pedido, true)}
+                    disabled={isSaving}
+                    className="px-4 py-2 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] disabled:opacity-60"
+                  >
+                    Aceitar convite
+                  </button>
+
+                  <button
+                    onClick={() => void responderConvite(pedido, false)}
+                    disabled={isSaving}
+                    className="px-4 py-2 rounded-xl border border-[#ffd2d2] text-[#9a3a3a] hover:bg-[#fff5f5] disabled:opacity-60"
+                  >
+                    Recusar
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       <section className="space-y-6">
         <div className="bg-white rounded-2xl shadow-sm border border-[#e8f0ed] p-5">
           <div className="flex items-center gap-2 mb-4">
@@ -1974,10 +2088,30 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
                 </div>
               )}
 
-              {pedido.tipoCoaching === 'Grupo' && pedido.outrosAlunosSugeridos && (
+              {pedido.tipoCoaching === 'Grupo' && pedido.convidados.length > 0 && (
                 <div className="mt-4 rounded-xl bg-[#f8faf9] border border-[#e8f0ed] p-4">
-                  <p className="text-xs text-[#7a9a8c] mb-1">Alunos convidados</p>
-                  <p className="text-sm text-[#5a7a6c]">{pedido.outrosAlunosSugeridos}</p>
+                  <p className="text-xs text-[#7a9a8c] mb-2">Alunos convidados</p>
+                  <div className="flex flex-wrap gap-2">
+                    {pedido.convidados.map((convidado) => (
+                      <span
+                        key={convidado.id}
+                        className={`px-3 py-1 rounded-full text-xs ${
+                          convidado.estado === 'ACEITE'
+                            ? 'bg-[#d4e8df] text-[#2d5f4f]'
+                            : convidado.estado === 'RECUSADO'
+                              ? 'bg-[#ffe0e0] text-[#9a3a3a]'
+                              : 'bg-[#fff4d4] text-[#8a6d1d]'
+                        }`}
+                      >
+                        {convidado.alunoNome} ·{' '}
+                        {convidado.estado === 'ACEITE'
+                          ? 'Aceite'
+                          : convidado.estado === 'RECUSADO'
+                            ? 'Recusou'
+                            : 'Convidado'}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -2228,21 +2362,59 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
             {pedidoForm.tipoCoaching === 'Grupo' && (
               <div className="md:col-span-2">
                 <FormField label="Alunos convidados">
-                  <input
-                    value={pedidoForm.alunosConvidados}
-                    onChange={(event) =>
-                      atualizarPedidoForm('alunosConvidados', event.target.value)
-                    }
-                    list="sugestoes-alunos-convidados"
-                    placeholder="Começa a escrever o nome de um aluno..."
-                    className="inputEntartes"
-                  />
+                  <select
+                    value=""
+                    onChange={(event) => {
+                      const aluno = todosAlunos.find((item) => item.id === event.target.value);
+                      if (!aluno) return;
 
-                  <datalist id="sugestoes-alunos-convidados">
-                    {sugestoesAlunosConvidados.map((nome) => (
-                      <option value={nome} key={nome} />
-                    ))}
-                  </datalist>
+                      setPedidoForm((atual) =>
+                        atual.convidados.some((item) => item.id === aluno.id)
+                          ? atual
+                          : { ...atual, convidados: [...atual.convidados, aluno] }
+                      );
+                    }}
+                    className="inputEntartes"
+                  >
+                    <option value="">Selecionar aluno para convidar...</option>
+                    {todosAlunos
+                      .filter(
+                        (aluno) =>
+                          aluno.id !== pedidoForm.alunoId &&
+                          !pedidoForm.convidados.some((item) => item.id === aluno.id)
+                      )
+                      .map((aluno) => (
+                        <option value={aluno.id} key={aluno.id}>
+                          {aluno.nome}
+                        </option>
+                      ))}
+                  </select>
+
+                  {pedidoForm.convidados.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {pedidoForm.convidados.map((aluno) => (
+                        <span
+                          key={aluno.id}
+                          className="flex items-center gap-1 px-3 py-1 rounded-full bg-[#d4e8df] text-[#2d5f4f] text-sm"
+                        >
+                          {aluno.nome}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPedidoForm((atual) => ({
+                                ...atual,
+                                convidados: atual.convidados.filter((item) => item.id !== aluno.id),
+                              }))
+                            }
+                            className="hover:text-[#9a3a3a]"
+                            aria-label={`Remover ${aluno.nome}`}
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </FormField>
               </div>
             )}

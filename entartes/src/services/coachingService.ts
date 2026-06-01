@@ -22,6 +22,21 @@ export type EstadoSessaoCoachingBackend =
   | 'REAGENDADA'
   | 'CANCELADA';
 
+export type ConvidadoBackend = {
+  _id?: string;
+  id?: string;
+  alunoId: string;
+  alunoNome?: string;
+  estado?: 'PENDENTE' | 'ACEITE' | 'RECUSADO';
+};
+
+export type ConvidadoApp = {
+  id: string;
+  alunoId: string;
+  alunoNome: string;
+  estado: 'PENDENTE' | 'ACEITE' | 'RECUSADO';
+};
+
 export type PedidoCoachingBackend = {
   _id?: string;
   id?: string;
@@ -38,6 +53,7 @@ export type PedidoCoachingBackend = {
   professoresInteressados?: string[];
   tipoCoaching?: TipoCoachingBackend;
   duracaoMinutos?: number;
+  convidados?: ConvidadoBackend[];
   outrosAlunosSugeridos?: string;
   preferenciaHorario?: string;
   observacoes?: string;
@@ -115,6 +131,7 @@ export type PedidoCoachingApp = {
   professoresInteressados: string[];
   tipoCoaching: TipoCoachingBackend;
   duracaoMinutos: number;
+  convidados: ConvidadoApp[];
   outrosAlunosSugeridos: string;
   preferenciaHorario: string;
   observacoes: string;
@@ -246,6 +263,7 @@ export type CriarPedidoCoachingInput = {
   professorPreferencialNome?: string;
   tipoCoaching?: TipoCoachingBackend;
   duracaoMinutos?: number;
+  convidados?: { alunoId: string; alunoNome: string }[];
   outrosAlunosSugeridos?: string;
   preferenciaHorario?: string;
   observacoes?: string;
@@ -424,6 +442,12 @@ export function adaptarPedidoCoachingBackend(
     professoresInteressados: pedido.professoresInteressados ?? [],
     tipoCoaching: pedido.tipoCoaching ?? 'Individual',
     duracaoMinutos: pedido.duracaoMinutos ?? 60,
+    convidados: (pedido.convidados ?? []).map((convidado) => ({
+      id: convidado._id ?? convidado.id ?? convidado.alunoId,
+      alunoId: convidado.alunoId,
+      alunoNome: convidado.alunoNome ?? convidado.alunoId,
+      estado: convidado.estado ?? 'PENDENTE',
+    })),
     outrosAlunosSugeridos: pedido.outrosAlunosSugeridos ?? '',
     preferenciaHorario: pedido.preferenciaHorario ?? pedido.horarioFinal ?? '',
     observacoes: pedido.observacoes ?? pedido.notas ?? '',
@@ -519,6 +543,11 @@ export async function criarPedidoCoaching(input: CriarPedidoCoachingInput) {
     professorPreferencialNome: input.professorPreferencialNome ?? input.professorNome ?? '',
     tipoCoaching: input.tipoCoaching ?? 'Individual',
     duracaoMinutos: input.duracaoMinutos ?? 60,
+    convidados: (input.convidados ?? []).map((convidado) => ({
+      alunoId: convidado.alunoId,
+      alunoNome: convidado.alunoNome,
+      estado: 'PENDENTE',
+    })),
     outrosAlunosSugeridos: input.outrosAlunosSugeridos ?? '',
     preferenciaHorario: input.preferenciaHorario ?? input.horarioFinal ?? '',
     observacoes: input.observacoes ?? input.notas ?? '',
@@ -613,6 +642,18 @@ export async function aceitarPedidoCoaching(
       professorId: input.professorId,
       professorNome: input.professorNome ?? '',
     }
+  );
+
+  return adaptarPedidoCoachingBackend(response.pedido);
+}
+
+export async function responderConvitePedidoCoaching(
+  pedidoId: string,
+  input: { alunoId: string; estado: 'ACEITE' | 'RECUSADO' }
+) {
+  const response = await api.patch<PedidoMutationResponse>(
+    `/pedidos-coaching/${pedidoId}/convite`,
+    { alunoId: input.alunoId, estado: input.estado }
   );
 
   return adaptarPedidoCoachingBackend(response.pedido);

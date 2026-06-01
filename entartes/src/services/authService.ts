@@ -171,6 +171,17 @@ export async function listarAlunosDaConta(): Promise<AlunoAssociado[]> {
     .map((perfil) => ({ id: perfil.id, nome: perfil.nome }));
 }
 
+type ListarAlunosResponse = {
+  total: number;
+  alunos: { id: string; nome: string; contaId?: string }[];
+};
+
+export async function listarTodosOsAlunos(): Promise<AlunoAssociado[]> {
+  const response = await apiRequest<ListarAlunosResponse>('/auth/alunos');
+
+  return response.alunos.map((aluno) => ({ id: aluno.id, nome: aluno.nome }));
+}
+
 export function buildAppUserFromAuthResponse(
   response: SelecionarPerfilResponse,
   perfisConta: PerfilDisponivel[] = []

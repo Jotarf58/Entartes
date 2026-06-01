@@ -33,6 +33,12 @@ router.get(
     (req, res) => authController.listarProfessores(req, res)
 );
 
+router.get(
+    "/alunos",
+    authMiddleware,
+    (req, res) => authController.listarAlunos(req, res)
+);
+
 router.post("/utilizadores", authMiddleware, autorizarTipos("ADMIN"), (req, res) =>
     authController.criarUtilizador(req, res)
 );
