@@ -72,6 +72,7 @@ export type AppUser = {
   roleLabel: string;
   description: string;
   initials: string;
+  educandos: AlunoAssociado[];
   token: string;
 };
 
@@ -171,10 +172,15 @@ export async function listarAlunosDaConta(): Promise<AlunoAssociado[]> {
 }
 
 export function buildAppUserFromAuthResponse(
-  response: SelecionarPerfilResponse
+  response: SelecionarPerfilResponse,
+  perfisConta: PerfilDisponivel[] = []
 ): AppUser {
   const perfil = response.perfilAtivo;
   const utilizador = response.utilizador;
+
+  const educandos = perfisConta
+    .filter((item) => item.tipoPerfil === 'ALUNO')
+    .map((item) => ({ id: item.id, nome: item.nome }));
 
   return {
     contaId: utilizador.id,
@@ -187,6 +193,7 @@ export function buildAppUserFromAuthResponse(
     roleLabel: getRoleLabel(perfil.tipoPerfil),
     description: getProfileDescription(perfil.tipoPerfil),
     initials: getInitials(perfil.nome),
+    educandos,
     token: response.token,
   };
 }

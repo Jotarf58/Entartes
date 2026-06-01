@@ -324,7 +324,10 @@ function LoginPage({ onLogin }: { onLogin: (user: AppUser) => void }) {
         perfilEntradaDireta.id
       );
 
-      const appUser = buildAppUserFromAuthResponse(perfilResponse);
+      const appUser = buildAppUserFromAuthResponse(
+        perfilResponse,
+        response.perfisDisponiveis
+      );
 
       onLogin(appUser);
       return;
@@ -354,7 +357,10 @@ function LoginPage({ onLogin }: { onLogin: (user: AppUser) => void }) {
         pin
       );
 
-      const appUser = buildAppUserFromAuthResponse(response);
+      const appUser = buildAppUserFromAuthResponse(
+        response,
+        loginData.perfisDisponiveis
+      );
 
       onLogin(appUser);
     } catch (error) {

@@ -65,6 +65,7 @@ type CurrentUser = {
   roleLabel: string;
   description: string;
   initials: string;
+  educandos?: AlunoAssociado[];
 };
 
 type TipoCoaching = 'Individual' | 'Grupo';
@@ -500,28 +501,30 @@ function criarVagaForm(currentUser: CurrentUser, estudios: EstudioOption[]): Vag
   };
 }
 
+function formatarDataPt(data: string) {
+  if (!data) return '';
+
+  const dataObj = new Date(`${data}T00:00:00`);
+
+  if (Number.isNaN(dataObj.getTime())) {
+    return data;
+  }
+
+  const dia = String(dataObj.getDate()).padStart(2, '0');
+  const mes = String(dataObj.getMonth() + 1).padStart(2, '0');
+  const ano = dataObj.getFullYear();
+
+  return `${dia}/${mes}/${ano}`;
+}
+
 function formatarHorarioPreferido(data: string, hora: string) {
   if (!data && !hora) return '';
 
-  const partes: string[] = [];
+  const dataFormatada = formatarDataPt(data);
 
-  if (data) {
-    const dataObj = new Date(`${data}T00:00:00`);
+  if (dataFormatada && hora) return `${dataFormatada} às ${hora}`;
 
-    partes.push(
-      Number.isNaN(dataObj.getTime())
-        ? data
-        : new Intl.DateTimeFormat('pt-PT', {
-            weekday: 'long',
-            day: '2-digit',
-            month: 'long',
-          }).format(dataObj)
-    );
-  }
-
-  if (hora) partes.push(hora);
-
-  return partes.join(', ');
+  return dataFormatada || hora;
 }
 
 function getPageSubtitle(role: UserRole) {
@@ -621,10 +624,14 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
     try {
       setIsLoading(true);
 
+      const educandosSessao = currentUser.educandos ?? [];
+
       const [estudiosBackend, professoresBackend, alunosBackend] = await Promise.all([
         listarEstudios().catch(() => []),
         listarProfessoresCoaching().catch(() => []),
-        isEncarregado ? listarAlunosDaConta().catch(() => []) : Promise.resolve([]),
+        isEncarregado && educandosSessao.length === 0
+          ? listarAlunosDaConta().catch(() => [])
+          : Promise.resolve(educandosSessao),
       ]);
 
       const estudiosNormalizados = normalizarEstudiosBackend(estudiosBackend);
@@ -1711,7 +1718,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
                   disabled
                   className="inputEntartes disabled:opacity-70"
                 />
-              ) : (
+              ) : alunosAssociados.length > 0 ? (
                 <select
                   value={pedidoForm.alunoId}
                   onChange={(event) => {
@@ -1724,16 +1731,25 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
                   }}
                   className="inputEntartes"
                 >
-                  {alunosAssociados.length === 0 && (
-                    <option value="">Sem alunos associados à conta</option>
-                  )}
-
                   {alunosAssociados.map((aluno) => (
                     <option value={aluno.id} key={aluno.id}>
                       {aluno.nome}
                     </option>
                   ))}
                 </select>
+              ) : (
+                <input
+                  value={pedidoForm.alunoNome}
+                  onChange={(event) =>
+                    setPedidoForm((atual) => ({
+                      ...atual,
+                      alunoId: '',
+                      alunoNome: event.target.value,
+                    }))
+                  }
+                  placeholder="Nome do aluno"
+                  className="inputEntartes"
+                />
               )}
             </FormField>
 
