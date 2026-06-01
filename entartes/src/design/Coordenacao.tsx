@@ -37,10 +37,24 @@ import {
 } from '../services/coachingService';
 import { listarEventos, type EventoApp } from '../services/eventosService';
 import {
+  atualizarEstudio,
   criarEstudio,
   listarEstudios,
+  removerEstudio,
   type EstudioApp,
 } from '../services/estudiosService';
+import {
+  criarItemInventario,
+  listarInventario,
+  removerItemInventario,
+  type MarketplaceItemApp,
+} from '../services/inventarioService';
+import {
+  criarModalidade,
+  listarModalidadesRegistos,
+  removerModalidade,
+  type ModalidadeRegisto,
+} from '../services/horarioService';
 import {
   criarRegistoFinanceiro,
   exportarFinanceiroCsv,
@@ -150,7 +164,19 @@ type SalaForm = {
   tipo: string;
   capacidade: string;
   ativa: boolean;
-  modalidadesTexto: string;
+  modalidadesPermitidas: string[];
+};
+
+type CoordenacaoUser = {
+  contaId?: string;
+  perfilId?: string;
+  name: string;
+};
+
+type InventarioForm = {
+  titulo: string;
+  descricao: string;
+  estadoConservacao: string;
 };
 
 type InterrupcaoForm = {
@@ -390,7 +416,15 @@ function criarSalaFormVazio(): SalaForm {
     tipo: 'Estúdio',
     capacidade: '20',
     ativa: true,
-    modalidadesTexto: '',
+    modalidadesPermitidas: [],
+  };
+}
+
+function criarInventarioFormVazio(): InventarioForm {
+  return {
+    titulo: '',
+    descricao: '',
+    estadoConservacao: 'Bom',
   };
 }
 
@@ -422,7 +456,7 @@ function salaParaForm(sala: Sala): SalaForm {
     tipo: sala.tipo,
     capacidade: String(sala.capacidade),
     ativa: sala.ativa,
-    modalidadesTexto: sala.modalidadesPermitidas.join(', '),
+    modalidadesPermitidas: [...sala.modalidadesPermitidas],
   };
 }
 
@@ -464,13 +498,6 @@ function vagaParaForm(vaga: VagaCoaching): VagaForm {
     dataFim: vaga.dataFim,
     estado: vaga.estado,
   };
-}
-
-function splitModalidades(texto: string) {
-  return texto
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
 }
 
 const VALOR_HORA_COACHING_NORMAL = 36;
@@ -527,10 +554,19 @@ function coachingJaPassou(dataISO: string, hora: string, duracaoMinutos: number)
   return fim.getTime() < Date.now();
 }
 
-export default function Coordenacao() {
+export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoUser }) {
   const [salasLocais, setSalasLocais] = useState<Sala[]>([]);
   const [eventosResumo, setEventosResumo] = useState<EventoResumo[]>([]);
   const [professoresLista, setProfessoresLista] = useState<Professor[]>([]);
+
+  const [modalidadesDisponiveis, setModalidadesDisponiveis] = useState<ModalidadeRegisto[]>([]);
+  const [novaModalidade, setNovaModalidade] = useState('');
+
+  const [inventarioEscola, setInventarioEscola] = useState<MarketplaceItemApp[]>([]);
+  const [modalInventarioAberta, setModalInventarioAberta] = useState(false);
+  const [inventarioForm, setInventarioForm] = useState<InventarioForm>(
+    criarInventarioFormVazio()
+  );
 
   const [pedidos, setPedidos] = useState<PedidoCoaching[]>([]);
 
@@ -604,6 +640,8 @@ export default function Coordenacao() {
         eventosResult,
         financeiroResult,
         interrupcoesResult,
+        modalidadesResult,
+        inventarioResult,
       ] = await Promise.allSettled([
         listarProfessoresCoaching(),
         listarEstudios(),
@@ -612,6 +650,8 @@ export default function Coordenacao() {
         listarEventos(),
         listarFinanceiro(),
         listarInterrupcoes(),
+        listarModalidadesRegistos(),
+        listarInventario(),
       ]);
 
       let professoresBase: Professor[] = [];
@@ -656,6 +696,16 @@ export default function Coordenacao() {
       if (interrupcoesResult.status === 'fulfilled' && interrupcoesResult.value.length > 0) {
         setInterrupcoes(
           interrupcoesResult.value.map(mapInterrupcaoBackendParaCoordenacao)
+        );
+      }
+
+      if (modalidadesResult.status === 'fulfilled') {
+        setModalidadesDisponiveis(modalidadesResult.value);
+      }
+
+      if (inventarioResult.status === 'fulfilled') {
+        setInventarioEscola(
+          inventarioResult.value.filter((item) => item.origem === 'ESCOLA')
         );
       }
     } catch (error) {
@@ -901,21 +951,21 @@ export default function Coordenacao() {
       return;
     }
 
-    const salaAtualizada: Sala = {
-      id: salaEditandoId ?? `sala-${Date.now()}`,
-      nome: salaForm.nome,
-      tipo: salaForm.tipo,
-      capacidade,
-      ativa: salaForm.ativa,
-      modalidadesPermitidas: splitModalidades(salaForm.modalidadesTexto),
-    };
-
     try {
       setErro('');
 
       if (salaEditandoId) {
+        const estudioAtualizado = await atualizarEstudio(salaEditandoId, {
+          nome: salaForm.nome,
+          capacidade,
+          modalidadesPermitidas: salaForm.modalidadesPermitidas,
+          estado: salaForm.ativa ? 'ATIVO' : 'INATIVO',
+        });
+
         setSalasLocais((atuais) =>
-          atuais.map((sala) => (sala.id === salaEditandoId ? salaAtualizada : sala))
+          atuais.map((sala) =>
+            sala.id === salaEditandoId ? mapEstudioParaSala(estudioAtualizado) : sala
+          )
         );
 
         setMensagem('Sala atualizada.');
@@ -926,7 +976,7 @@ export default function Coordenacao() {
       const estudioCriado = await criarEstudio({
         nome: salaForm.nome,
         capacidade,
-        modalidadesPermitidas: splitModalidades(salaForm.modalidadesTexto),
+        modalidadesPermitidas: salaForm.modalidadesPermitidas,
         estado: salaForm.ativa ? 'ATIVO' : 'INATIVO',
       });
 
@@ -938,9 +988,14 @@ export default function Coordenacao() {
     }
   }
 
-  function apagarSala(salaId: string) {
-    setSalasLocais((atuais) => atuais.filter((sala) => sala.id !== salaId));
-    setMensagem('Sala removida apenas da vista local.');
+  async function apagarSala(salaId: string) {
+    try {
+      await removerEstudio(salaId);
+      setSalasLocais((atuais) => atuais.filter((sala) => sala.id !== salaId));
+      setMensagem('Sala removida.');
+    } catch (error) {
+      setErro(getErrorMessage(error));
+    }
   }
 
   function atualizarSalaForm<K extends keyof SalaForm>(campo: K, valor: SalaForm[K]) {
@@ -948,6 +1003,108 @@ export default function Coordenacao() {
       ...atual,
       [campo]: valor,
     }));
+  }
+
+  function alternarModalidadeSala(nome: string) {
+    setSalaForm((atual) => {
+      const existe = atual.modalidadesPermitidas.includes(nome);
+
+      return {
+        ...atual,
+        modalidadesPermitidas: existe
+          ? atual.modalidadesPermitidas.filter((item) => item !== nome)
+          : [...atual.modalidadesPermitidas, nome],
+      };
+    });
+  }
+
+  async function adicionarModalidade() {
+    const nome = novaModalidade.trim();
+
+    if (!nome) {
+      setMensagem('Indica o nome da modalidade.');
+      return;
+    }
+
+    try {
+      const criada = await criarModalidade(nome);
+      setModalidadesDisponiveis((atuais) =>
+        [...atuais, criada].sort((a, b) => a.nome.localeCompare(b.nome))
+      );
+      setNovaModalidade('');
+      setMensagem('Modalidade criada com sucesso.');
+    } catch (error) {
+      setErro(getErrorMessage(error));
+    }
+  }
+
+  async function apagarModalidade(id: string) {
+    try {
+      await removerModalidade(id);
+      setModalidadesDisponiveis((atuais) => atuais.filter((item) => item.id !== id));
+      setMensagem('Modalidade removida.');
+    } catch (error) {
+      setErro(getErrorMessage(error));
+    }
+  }
+
+  function abrirCriarInventario() {
+    setInventarioForm(criarInventarioFormVazio());
+    setModalInventarioAberta(true);
+    setMensagem('');
+    setErro('');
+  }
+
+  function atualizarInventarioForm<K extends keyof InventarioForm>(
+    campo: K,
+    valor: InventarioForm[K]
+  ) {
+    setInventarioForm((atual) => ({
+      ...atual,
+      [campo]: valor,
+    }));
+  }
+
+  async function guardarItemInventario() {
+    if (!inventarioForm.titulo.trim()) {
+      setMensagem('Indica o nome do item.');
+      return;
+    }
+
+    if (!inventarioForm.descricao.trim()) {
+      setMensagem('Indica a descrição do item.');
+      return;
+    }
+
+    try {
+      setErro('');
+
+      const item = await criarItemInventario({
+        titulo: inventarioForm.titulo,
+        descricao: inventarioForm.descricao,
+        estadoConservacao: inventarioForm.estadoConservacao,
+        tipoTransacao: 'REQUISITAR',
+        preco: 0,
+        utilizadorId: currentUser.perfilId || currentUser.contaId || '',
+        origem: 'ESCOLA',
+      });
+
+      setInventarioEscola((atuais) => [item, ...atuais]);
+      setMensagem('Item adicionado ao inventário da escola.');
+      setModalInventarioAberta(false);
+    } catch (error) {
+      setErro(getErrorMessage(error));
+    }
+  }
+
+  async function apagarItemInventario(itemId: string) {
+    try {
+      await removerItemInventario(itemId);
+      setInventarioEscola((atuais) => atuais.filter((item) => item.id !== itemId));
+      setMensagem('Item removido do inventário da escola.');
+    } catch (error) {
+      setErro(getErrorMessage(error));
+    }
   }
 
   function abrirCriarInterrupcao() {
@@ -1441,6 +1598,58 @@ export default function Coordenacao() {
 
       <div className="space-y-8 mb-10">
         <section className="bg-white rounded-2xl shadow-sm border border-[#e8f0ed] p-6">
+          <div className="flex items-center gap-2 mb-5">
+            <Filter className="w-5 h-5 text-[#2d5f4f]" />
+            <h2 className="text-[#2d5f4f]">Modalidades</h2>
+          </div>
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center mb-5">
+            <input
+              value={novaModalidade}
+              onChange={(event) => setNovaModalidade(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  void adicionarModalidade();
+                }
+              }}
+              className="inputEntartes sm:max-w-xs"
+              placeholder="Ex.: Ballet"
+            />
+
+            <button
+              onClick={() => void adicionarModalidade()}
+              className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40]"
+            >
+              <Plus className="w-4 h-4" />
+              Criar modalidade
+            </button>
+          </div>
+
+          {modalidadesDisponiveis.length === 0 ? (
+            <p className="text-sm text-[#7a9a8c]">Ainda não existem modalidades.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {modalidadesDisponiveis.map((modalidade) => (
+                <span
+                  key={modalidade.id}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#f0f6f3] border border-[#d9e8e1] text-[#2d5f4f] text-sm"
+                >
+                  {modalidade.nome}
+                  <button
+                    onClick={() => void apagarModalidade(modalidade.id)}
+                    className="text-[#9a3a3a] hover:text-[#7a2c2c]"
+                    aria-label={`Remover ${modalidade.nome}`}
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="bg-white rounded-2xl shadow-sm border border-[#e8f0ed] p-6">
           <div className="flex items-center justify-between gap-4 mb-5">
             <div className="flex items-center gap-2">
               <DoorOpen className="w-5 h-5 text-[#2d5f4f]" />
@@ -1509,6 +1718,55 @@ export default function Coordenacao() {
               );
             })}
           </div>
+        </section>
+
+        <section className="bg-white rounded-2xl shadow-sm border border-[#e8f0ed] p-6">
+          <div className="flex items-center justify-between gap-4 mb-5">
+            <div className="flex items-center gap-2">
+              <WalletCards className="w-5 h-5 text-[#2d5f4f]" />
+              <h2 className="text-[#2d5f4f]">Inventário da escola</h2>
+            </div>
+
+            <button
+              onClick={abrirCriarInventario}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-[#f0f6f3]"
+            >
+              <Plus className="w-4 h-4" />
+              Adicionar item
+            </button>
+          </div>
+
+          <p className="text-sm text-[#7a9a8c] mb-4">
+            Estes itens ficam disponíveis no dropdown ao publicar anúncios em nome da escola.
+          </p>
+
+          {inventarioEscola.length === 0 ? (
+            <p className="text-sm text-[#7a9a8c]">Ainda não existem itens no inventário.</p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {inventarioEscola.map((item) => (
+                <article
+                  key={item.id}
+                  className="rounded-xl border border-[#e8f0ed] bg-[#f8faf9] p-4"
+                >
+                  <div className="flex items-start justify-between gap-3 mb-2">
+                    <h3 className="text-[#2d5f4f]">{item.nome}</h3>
+
+                    <button
+                      onClick={() => void apagarItemInventario(item.id)}
+                      className="px-2 py-2 rounded-xl border border-[#ffd2d2] text-[#9a3a3a] hover:bg-[#fff5f5]"
+                      aria-label={`Remover ${item.nome}`}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <p className="text-sm text-[#5a7a6c] mb-1">{item.descricao}</p>
+                  <p className="text-xs text-[#7a9a8c]">Estado: {item.estadoConservacao}</p>
+                </article>
+              ))}
+            </div>
+          )}
         </section>
 
         <section className="bg-white rounded-2xl shadow-sm border border-[#e8f0ed] p-6">
@@ -1837,14 +2095,34 @@ export default function Coordenacao() {
 
             <div className="md:col-span-2">
               <FormField label="Modalidades permitidas">
-                <input
-                  value={salaForm.modalidadesTexto}
-                  onChange={(event) =>
-                    atualizarSalaForm('modalidadesTexto', event.target.value)
-                  }
-                  className="inputEntartes"
-                  placeholder="Ex.: Ballet, Jazz, Hip Hop"
-                />
+                {modalidadesDisponiveis.length === 0 ? (
+                  <p className="text-sm text-[#7a9a8c]">
+                    Cria modalidades no bloco "Modalidades" para as associar a este estúdio.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {modalidadesDisponiveis.map((modalidade) => {
+                      const selecionada = salaForm.modalidadesPermitidas.includes(
+                        modalidade.nome
+                      );
+
+                      return (
+                        <button
+                          key={modalidade.id}
+                          type="button"
+                          onClick={() => alternarModalidadeSala(modalidade.nome)}
+                          className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
+                            selecionada
+                              ? 'bg-[#2d5f4f] text-white border-[#2d5f4f]'
+                              : 'bg-white text-[#2d5f4f] border-[#d9e8e1] hover:bg-[#f0f6f3]'
+                          }`}
+                        >
+                          {modalidade.nome}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </FormField>
             </div>
           </div>
@@ -1854,6 +2132,60 @@ export default function Coordenacao() {
             confirmLabel="Guardar sala"
             onCancel={() => setModalSalaAberta(false)}
             onConfirm={guardarSala}
+          />
+        </Modal>
+      )}
+
+      {modalInventarioAberta && (
+        <Modal onClose={() => setModalInventarioAberta(false)}>
+          <ModalHeader
+            title="Novo item de inventário"
+            subtitle="Adiciona figurinos, acessórios ou material da escola."
+            onClose={() => setModalInventarioAberta(false)}
+          />
+
+          <div className="space-y-4">
+            <FormField label="Nome">
+              <input
+                value={inventarioForm.titulo}
+                onChange={(event) => atualizarInventarioForm('titulo', event.target.value)}
+                className="inputEntartes"
+                placeholder="Ex.: Tutu de ballet"
+              />
+            </FormField>
+
+            <FormField label="Descrição">
+              <textarea
+                value={inventarioForm.descricao}
+                onChange={(event) =>
+                  atualizarInventarioForm('descricao', event.target.value)
+                }
+                className="inputEntartes min-h-24"
+                placeholder="Detalhes do item"
+              />
+            </FormField>
+
+            <FormField label="Estado de conservação">
+              <select
+                value={inventarioForm.estadoConservacao}
+                onChange={(event) =>
+                  atualizarInventarioForm('estadoConservacao', event.target.value)
+                }
+                className="inputEntartes"
+              >
+                <option value="Novo">Novo</option>
+                <option value="Bom">Bom</option>
+                <option value="Razoável">Razoável</option>
+                <option value="Usado">Usado</option>
+              </select>
+            </FormField>
+          </div>
+
+          <ModalActions
+            cancelLabel="Cancelar"
+            confirmLabel="Adicionar item"
+            onCancel={() => setModalInventarioAberta(false)}
+            onConfirm={guardarItemInventario}
           />
         </Modal>
       )}

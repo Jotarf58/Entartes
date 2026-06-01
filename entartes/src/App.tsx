@@ -178,7 +178,7 @@ export default function App() {
           return <Dashboard currentUser={loggedUser} onNavigate={setCurrentPage} />;
         }
 
-        return <Coordenacao />;
+        return <Coordenacao currentUser={loggedUser} />;
 
       default:
         return <Dashboard currentUser={loggedUser} onNavigate={setCurrentPage} />;

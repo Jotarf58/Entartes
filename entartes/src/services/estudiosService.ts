@@ -75,6 +75,19 @@ export async function criarEstudio(input: CriarEstudioInput) {
   return adaptarEstudioBackend(response.estudio);
 }
 
+export async function atualizarEstudio(
+  id: string,
+  input: Partial<CriarEstudioInput>
+) {
+  const response = await api.patch<EstudioMutationResponse>(`/estudios/${id}`, input);
+
+  return adaptarEstudioBackend(response.estudio);
+}
+
+export async function removerEstudio(id: string) {
+  return api.delete<{ mensagem: string }>(`/estudios/${id}`);
+}
+
 export async function verificarDisponibilidadeEstudio(
   estudioId: string,
   dataInicio: string,

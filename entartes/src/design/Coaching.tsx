@@ -99,6 +99,8 @@ type PedidoCoaching = {
   outrosAlunosSugeridos: string;
   preferenciaHorario: string;
   observacoes: string;
+  salaId: string;
+  salaNome: string;
   estado: EstadoPedido;
   motivoRejeicao: string;
   vagaId: string;
@@ -427,6 +429,8 @@ function pedidoBackendParaUi(
     outrosAlunosSugeridos: pedido.outrosAlunosSugeridos || '',
     preferenciaHorario: pedido.preferenciaHorario || pedido.horarioFinal || '',
     observacoes: pedido.observacoes || '',
+    salaId: pedido.salaId ?? '',
+    salaNome: pedido.salaNome ?? '',
     estado: pedido.estado,
     motivoRejeicao: pedido.motivoRejeicao,
     vagaId: pedido.vagaId ?? '',
@@ -626,6 +630,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
     duracaoMinutos: 60,
     dataPreferida: '',
     horaPreferida: '',
+    salaId: '',
   });
 
   const [pedidoForm, setPedidoForm] = useState<PedidoForm>(() => criarPedidoForm(currentUser, []));
@@ -1184,7 +1189,10 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
     }
   }
 
-  async function aceitarPedido(pedido: PedidoCoaching) {
+  async function aceitarPedido(
+    pedido: PedidoCoaching,
+    sala?: { salaId: string; salaNome: string }
+  ) {
     const professorId = professorIdAtual || pedido.professorPreferencialId || professoresOpcoes[0]?.id || '';
 
     if (!professorId) {
@@ -1192,20 +1200,29 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
       return;
     }
 
+    const salaId = sala?.salaId || pedido.salaId || '';
+    const salaNome = sala?.salaNome || pedido.salaNome || '';
+
     if (pedido.isMock) {
       atualizarPedidoLocal({
         ...pedido,
         estado: 'ACEITE_PROFESSOR',
+        salaId,
+        salaNome,
         professorPreferencialId: professorId,
         professorPreferencialNome: getProfessorNome(professorId, currentUser.name),
       });
-      setMensagem('Pedido mock aceite pelo professor.');
+      setMensagem('Pedido aceite pelo professor.');
       return;
     }
 
     try {
       setIsSaving(true);
-      const pedidoAtualizado = await aceitarPedidoCoaching(pedido.id, { professorId });
+      await aceitarPedidoCoaching(pedido.id, { professorId });
+      const pedidoAtualizado = await atualizarPedidoCoaching(pedido.id, {
+        salaId,
+        salaNome,
+      });
 
       atualizarPedidoLocal({
         ...pedido,
@@ -1217,6 +1234,8 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
         outrosAlunosSugeridos: pedido.outrosAlunosSugeridos,
         preferenciaHorario: pedido.preferenciaHorario,
         observacoes: pedido.observacoes,
+        salaId,
+        salaNome,
         professorPreferencialNome: getProfessorNome(professorId, currentUser.name),
       });
 
@@ -1236,6 +1255,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
       duracaoMinutos: pedido.duracaoMinutos,
       dataPreferida: '',
       horaPreferida: '',
+      salaId: pedido.salaId || '',
     });
     setToast(null);
   }
@@ -1248,13 +1268,25 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
   async function confirmarAceitacao() {
     if (!pedidoConfirmacao) return;
 
+    if (!confirmacaoForm.salaId) {
+      setMensagem('Escolhe uma sala/estúdio para aceitar o coaching.');
+      return;
+    }
+
     const pedido = pedidoConfirmacao;
+    const salaNome = estudios.find((item) => item.id === confirmacaoForm.salaId)?.nome ?? '';
+
     fecharConfirmacao();
-    await aceitarPedido(pedido);
+    await aceitarPedido(pedido, { salaId: confirmacaoForm.salaId, salaNome });
   }
 
   async function confirmarComAlteracoes() {
     if (!pedidoConfirmacao) return;
+
+    if (!confirmacaoForm.salaId) {
+      setMensagem('Escolhe uma sala/estúdio para aceitar o coaching.');
+      return;
+    }
 
     const pedido = pedidoConfirmacao;
     const professorNome = getProfessorNomeComLista(
@@ -1262,6 +1294,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
       professoresOpcoes,
       currentUser.name
     );
+    const salaNome = estudios.find((item) => item.id === confirmacaoForm.salaId)?.nome ?? '';
     const novoHorario =
       formatarHorarioPreferido(confirmacaoForm.dataPreferida, confirmacaoForm.horaPreferida) ||
       pedido.preferenciaHorario;
@@ -1274,6 +1307,8 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
         professorNome,
         duracaoMinutos: confirmacaoForm.duracaoMinutos,
         preferenciaHorario: novoHorario,
+        salaId: confirmacaoForm.salaId,
+        salaNome,
         estado: 'AGUARDA_ALUNO',
       });
 
@@ -1286,6 +1321,8 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
         professorPreferencialNome: professorNome,
         duracaoMinutos: confirmacaoForm.duracaoMinutos,
         preferenciaHorario: novoHorario,
+        salaId: confirmacaoForm.salaId,
+        salaNome,
         estado: 'AGUARDA_ALUNO',
       });
 
@@ -1736,6 +1773,25 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
             }
             onClose={fecharConfirmacao}
           />
+
+          <div className="mb-4">
+            <FormField label="Sala/estúdio (obrigatório)">
+              <select
+                value={confirmacaoForm.salaId}
+                onChange={(event) =>
+                  setConfirmacaoForm((atual) => ({ ...atual, salaId: event.target.value }))
+                }
+                className="inputEntartes"
+              >
+                <option value="">Selecionar sala/estúdio</option>
+                {estudios.map((estudio) => (
+                  <option value={estudio.id} key={estudio.id}>
+                    {estudio.nome}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+          </div>
 
           {confirmandoAlteracoes ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">

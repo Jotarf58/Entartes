@@ -274,3 +274,40 @@ export async function listarModalidadesReferencia() {
 
   return response.modalidades;
 }
+
+export type ModalidadeRegisto = {
+  id: string;
+  nome: string;
+};
+
+export type ListarModalidadesRegistosResponse = {
+  total: number;
+  modalidades: string[];
+  registos?: ModalidadeRegisto[];
+};
+
+export async function listarModalidadesRegistos(): Promise<ModalidadeRegisto[]> {
+  const response = await api.get<ListarModalidadesRegistosResponse>('/modalidades');
+
+  if (response.registos && response.registos.length > 0) {
+    return response.registos.map((registo) => ({
+      id: registo.id,
+      nome: registo.nome,
+    }));
+  }
+
+  return response.modalidades.map((nome) => ({ id: nome, nome }));
+}
+
+export async function criarModalidade(nome: string): Promise<ModalidadeRegisto> {
+  const response = await api.post<{ mensagem: string; modalidade: ModalidadeRegisto }>(
+    '/modalidades',
+    { nome }
+  );
+
+  return { id: response.modalidade.id, nome: response.modalidade.nome };
+}
+
+export async function removerModalidade(id: string) {
+  return api.delete<{ mensagem: string }>(`/modalidades/${id}`);
+}

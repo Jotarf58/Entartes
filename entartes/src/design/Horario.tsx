@@ -19,7 +19,7 @@ import {
   type ToastData,
 } from '../components/Toast';
 
-import { modalidades, type DiaSemana } from '../data/mockEntartes';
+import type { DiaSemana } from '../data/mockEntartes';
 import {
   atualizarAulaSemanal,
   criarAulaSemanal,
@@ -33,6 +33,10 @@ import {
   type AulaSemanalApp,
   type EstadoAulaBackend,
 } from '../services/horarioService';
+import {
+  listarPedidosCoaching,
+  type PedidoCoachingApp,
+} from '../services/coachingService';
 
 type UserRole = 'ALUNO' | 'ENCARREGADO' | 'PROFESSOR' | 'COORDENACAO';
 
@@ -140,7 +144,7 @@ const estadoAulaLabels: Record<EstadoAula, string> = {
 function criarAulaFormVazio(
   professoresLista: Professor[],
   salasLista: Sala[],
-  modalidadesLista: string[] = modalidades
+  modalidadesLista: string[] = []
 ): AulaForm {
   return {
     diaSemana: 'Segunda-feira',
@@ -289,6 +293,77 @@ function aulaBackendParaAula(aula: AulaSemanalApp): Aula {
   };
 }
 
+const diasSemanaPorIndice: Record<number, DiaSemana> = {
+  1: 'Segunda-feira',
+  2: 'Terça-feira',
+  3: 'Quarta-feira',
+  4: 'Quinta-feira',
+  5: 'Sexta-feira',
+  6: 'Sábado',
+};
+
+const ESTADOS_COACHING_HORARIO = ['ACEITE_PROFESSOR', 'AGUARDA_ALUNO', 'APROVADO'];
+
+function parseDataHoraCoaching(texto: string) {
+  let dataISO = '';
+  let hora = '';
+
+  const dataMatch = texto.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  if (dataMatch) dataISO = `${dataMatch[3]}-${dataMatch[2]}-${dataMatch[1]}`;
+
+  const horaMatch = texto.match(/(\d{2}):(\d{2})/);
+  if (horaMatch) hora = `${horaMatch[1]}:${horaMatch[2]}`;
+
+  return { dataISO, hora };
+}
+
+function adicionarMinutosHora(hora: string, minutos: number) {
+  const [h, m] = hora.split(':').map(Number);
+
+  if (Number.isNaN(h) || Number.isNaN(m)) return hora;
+
+  const total = h * 60 + m + minutos;
+  const hh = Math.floor(total / 60) % 24;
+  const mm = total % 60;
+
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
+function coachingParaAula(pedido: PedidoCoachingApp): Aula | null {
+  if (!ESTADOS_COACHING_HORARIO.includes(pedido.estado)) return null;
+
+  const fonte = pedido.preferenciaHorario || pedido.horarioFinal || '';
+  const { dataISO, hora } = parseDataHoraCoaching(fonte);
+
+  if (!dataISO || !hora) return null;
+
+  const data = new Date(`${dataISO}T00:00:00`);
+
+  if (Number.isNaN(data.getTime())) return null;
+
+  const diaSemana = diasSemanaPorIndice[data.getDay()];
+
+  if (!diaSemana) return null;
+
+  const horaFim = adicionarMinutosHora(hora, pedido.duracaoMinutos || 60);
+
+  return {
+    id: `coaching-${pedido.id}`,
+    diaSemana,
+    horaInicio: hora,
+    horaFim,
+    modalidade: pedido.modalidade,
+    turma: `Coaching · ${pedido.alunoNome}`,
+    professorId: pedido.professorPreferencialId || pedido.professorId || '',
+    professorNome: pedido.professorPreferencialNome || pedido.professorNome || '',
+    salaNome: pedido.salaNome || 'A definir',
+    faixaEtaria: 'Coaching',
+    vagas: 1,
+    inscritos: 1,
+    estado: 'ATIVA',
+  };
+}
+
 function isAulaPersistida(id: string) {
   return /^[a-f\d]{24}$/i.test(id);
 }
@@ -321,9 +396,7 @@ export default function Horario({ currentUser }: { currentUser: CurrentUser }) {
 
   const [professoresLista, setProfessoresLista] = useState<Professor[]>([]);
   const [salasLista, setSalasLista] = useState<Sala[]>([]);
-  const [modalidadesLista, setModalidadesLista] = useState<string[]>(() => [
-    ...modalidades,
-  ]);
+  const [modalidadesLista, setModalidadesLista] = useState<string[]>([]);
 
   const [aulas, setAulas] = useState<Aula[]>([]);
 
@@ -373,13 +446,19 @@ export default function Horario({ currentUser }: { currentUser: CurrentUser }) {
       try {
         setCarregandoHorario(true);
 
-        const [aulasBackend, professoresBackend, salasBackend, modalidadesBackend] =
-          await Promise.all([
-            listarAulasSemanais(),
-            listarProfessoresReferencia().catch(() => []),
-            listarSalasReferencia().catch(() => []),
-            listarModalidadesReferencia().catch(() => []),
-          ]);
+        const [
+          aulasBackend,
+          professoresBackend,
+          salasBackend,
+          modalidadesBackend,
+          pedidosCoaching,
+        ] = await Promise.all([
+          listarAulasSemanais(),
+          listarProfessoresReferencia().catch(() => []),
+          listarSalasReferencia().catch(() => []),
+          listarModalidadesReferencia().catch(() => []),
+          listarPedidosCoaching().catch(() => [] as PedidoCoachingApp[]),
+        ]);
 
         if (!mounted) return;
 
@@ -405,7 +484,11 @@ export default function Horario({ currentUser }: { currentUser: CurrentUser }) {
           setModalidadesLista(modalidadesBackend);
         }
 
-        setAulas(aulasBackend.map(aulaBackendParaAula));
+        const aulasCoaching = pedidosCoaching
+          .map(coachingParaAula)
+          .filter((aula): aula is Aula => aula !== null);
+
+        setAulas([...aulasBackend.map(aulaBackendParaAula), ...aulasCoaching]);
       } catch (error) {
         if (!mounted) return;
 
@@ -922,8 +1005,14 @@ export default function Horario({ currentUser }: { currentUser: CurrentUser }) {
             <InfoBox label="Estado" value={estadoAulaLabels[aulaDetalhe.estado]} />
           </div>
 
+          {aulaDetalhe.faixaEtaria === 'Coaching' && (
+            <div className="mb-4 rounded-xl bg-[#f0e4ff] border border-[#e0ccff] p-3 text-sm text-[#5a3c7a]">
+              Sessão de coaching agendada. A gestão é feita na área de Coaching.
+            </div>
+          )}
+
           <div className="flex flex-wrap gap-3">
-            {(isAluno || isEncarregado) && (
+            {(isAluno || isEncarregado) && aulaDetalhe.faixaEtaria !== 'Coaching' && (
               <button
                 onClick={() => void solicitarInscricao(aulaDetalhe)}
                 disabled={operacaoEmCurso || inscricoesSolicitadas.includes(aulaDetalhe.id)}
@@ -935,7 +1024,7 @@ export default function Horario({ currentUser }: { currentUser: CurrentUser }) {
               </button>
             )}
 
-            {isCoordenacao && (
+            {isCoordenacao && aulaDetalhe.faixaEtaria !== 'Coaching' && (
               <>
                 <button
                   onClick={() => {
@@ -962,7 +1051,7 @@ export default function Horario({ currentUser }: { currentUser: CurrentUser }) {
             )}
           </div>
 
-          {isProfessor && (
+          {isProfessor && aulaDetalhe.faixaEtaria !== 'Coaching' && (
             <div className="space-y-3 mt-5">
               <FormField label="Pedido de alteração">
                 <textarea

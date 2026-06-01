@@ -221,6 +221,10 @@ export async function editarItemInventario(
   return adaptarItemInventarioBackend(response.item);
 }
 
+export async function removerItemInventario(id: string) {
+  return api.delete<{ mensagem: string }>(`/inventario/${id}`);
+}
+
 export async function encerrarItemInventario(id: string) {
   const response = await api.patch<InventarioMutationResponse>(
     `/inventario/${id}/encerrar`
