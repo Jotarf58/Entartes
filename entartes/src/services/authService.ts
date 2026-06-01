@@ -22,6 +22,12 @@ export type UtilizadorConta = {
   tipoConta: string;
   tiposUtilizador?: string[];
   estado: string;
+  perfisDisponiveis?: PerfilDisponivel[];
+};
+
+export type AlunoAssociado = {
+  id: string;
+  nome: string;
 };
 
 export type PerfilDisponivel = {
@@ -153,6 +159,15 @@ export async function selecionarPerfil(
 
 export async function getCurrentAuthUser() {
   return apiRequest<MeResponse>('/auth/me');
+}
+
+export async function listarAlunosDaConta(): Promise<AlunoAssociado[]> {
+  const response = await getCurrentAuthUser();
+  const perfis = response.utilizador.perfisDisponiveis ?? [];
+
+  return perfis
+    .filter((perfil) => perfil.tipoPerfil === 'ALUNO')
+    .map((perfil) => ({ id: perfil.id, nome: perfil.nome }));
 }
 
 export function buildAppUserFromAuthResponse(

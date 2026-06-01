@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   Calendar,
   CalendarCheck2,
-  CheckCircle2,
   Clock,
   DoorOpen,
   Filter,
@@ -16,10 +15,8 @@ import {
 
 import {
   modalidades,
-  pedidosCoachingMock,
   professores,
   salas,
-  vagasCoachingMock,
   type TipoAluno,
 } from '../data/mockEntartes';
 
@@ -27,6 +24,7 @@ import {
   aceitarPedidoCoaching,
   aprovarPedidoCoaching,
   associarVagaAPedido as associarVagaPedidoBackend,
+  atualizarPedidoCoaching,
   criarPedidoCoaching,
   criarSessaoCoaching,
   criarVagaCoaching,
@@ -51,6 +49,8 @@ import {
   type AulaSemanalApp,
 } from '../services/horarioService';
 import { verificarDisponibilidadeEstudio } from '../services/estudiosService';
+import { listarAlunosDaConta, type AlunoAssociado } from '../services/authService';
+import { Toast, type ToastData } from '../components/Toast';
 
 import { ApiError } from '../services/api';
 
@@ -116,14 +116,14 @@ type EstudioOption = {
 };
 
 type PedidoForm = {
+  alunoId: string;
   alunoNome: string;
-  tipoAluno: TipoAluno;
-  encarregadoNome: string;
   modalidade: string;
   professorPreferencialId: string;
   tipoCoaching: TipoCoaching;
-  outrosAlunosSugeridos: string;
-  preferenciaHorario: string;
+  alunosConvidados: string;
+  dataPreferida: string;
+  horaPreferida: string;
   observacoes: string;
 };
 
@@ -189,6 +189,31 @@ function getErrorMessage(error: unknown) {
   return 'Ocorreu um erro inesperado.';
 }
 
+const PALAVRAS_ERRO = [
+  'preenche',
+  'indica',
+  'seleciona',
+  'escolhe',
+  'já existe',
+  'não foi possível',
+  'não encontrado',
+  'não está',
+  'já não está',
+  'já tem',
+  'obrigat',
+  'inválid',
+  'erro',
+  'demasiado',
+];
+
+function limparMensagem(texto: string) {
+  return texto
+    .replace(/\s+(no|do|ao|pelo|para o)\s+backend/gi, '')
+    .replace(/\s+backend/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 const professoresExtraPorId: Record<string, string> = {};
 
 function isMongoObjectId(value: string) {
@@ -239,26 +264,6 @@ function getPerfilId(currentUser: CurrentUser, prefix: string) {
   return currentUser.perfilId || currentUser.contaId || slugId(currentUser.name, prefix);
 }
 
-function getString(item: Record<string, unknown>, key: string, fallback: string) {
-  const value = item[key];
-
-  if (typeof value === 'string' && value.trim()) {
-    return value;
-  }
-
-  return fallback;
-}
-
-function normalizarEstadoMock(value: string): EstadoPedido {
-  if (value === 'REJEITADO') return 'REJEITADO';
-  if (value === 'APROVADO' || value === 'AGENDADO') return 'APROVADO';
-  if (value === 'EM_ANALISE') return 'INTERESSE_REGISTADO';
-  return 'PENDENTE';
-}
-
-function normalizarEstadoVagaMock(value: string): EstadoVaga {
-  return value === 'ABERTA' ? 'ABERTA' : 'FECHADA';
-}
 
 function getDiaSemana(data: string) {
   if (!data) return 'A definir';
@@ -282,57 +287,6 @@ function formatDate(date: string) {
   }
 
   return new Intl.DateTimeFormat('pt-PT').format(parsedDate);
-}
-
-function getDetalheDasNotas(texto: string, etiqueta: string) {
-  const linhas = texto.split('\n');
-  const prefixo = `${etiqueta}:`.toLowerCase();
-
-  const linha = linhas.find((item) => item.trim().toLowerCase().startsWith(prefixo));
-
-  return linha?.slice(linha.indexOf(':') + 1).trim() ?? '';
-}
-
-function limparObservacoesPedido(texto: string) {
-  return texto
-    .split('\n')
-    .map((linha) => linha.trim())
-    .filter(Boolean)
-    .filter((linha) => {
-      const normalizada = linha.toLowerCase();
-
-      return (
-        !normalizada.startsWith('pedido criado a partir da disponibilidade') &&
-        !normalizada.startsWith('professor:') &&
-        !normalizada.startsWith('sala:') &&
-        !normalizada.startsWith('horário:') &&
-        !normalizada.startsWith('horario:')
-      );
-    })
-    .join('\n');
-}
-
-function getHorarioPedido(texto: string, horarioGuardado: string) {
-  const horarioNotas = getDetalheDasNotas(texto, 'Horário') || getDetalheDasNotas(texto, 'Horario');
-  const salaNotas = getDetalheDasNotas(texto, 'Sala');
-  const horarioBase = horarioGuardado && horarioGuardado !== 'A definir' ? horarioGuardado : horarioNotas;
-
-  if (horarioBase && salaNotas && !horarioBase.includes(salaNotas)) {
-    return `${horarioBase} · ${salaNotas}`;
-  }
-
-  return horarioBase || 'A definir';
-}
-
-function getProfessorPedido(
-  texto: string,
-  professorId: string,
-  professorNomeGuardado: string
-) {
-  const professorNotas = getDetalheDasNotas(texto, 'Professor');
-  const professorReferencia = professorNotas || professorNomeGuardado;
-
-  return getProfessorNome(professorId || professorReferencia, professorReferencia || 'Professor associado');
 }
 
 function calcularDuracaoMinutos(horaInicio: string, horaFim: string) {
@@ -401,6 +355,22 @@ function horariosSobrepoem(
   return startA < endB && startB < endA;
 }
 
+function adicionarUmaHora(hora: string) {
+  if (!hora) return '';
+
+  const [horas, minutos] = hora.split(':').map(Number);
+
+  if (Number.isNaN(horas) || Number.isNaN(minutos)) {
+    return hora;
+  }
+
+  const total = (horas + 1) * 60 + minutos;
+  const hh = Math.floor(total / 60) % 24;
+  const mm = total % 60;
+
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
 function normalizarEstudiosMock(): EstudioOption[] {
   return salas.map((sala, index) => ({
     id: sala.id ?? `estudio-${index}`,
@@ -415,94 +385,34 @@ function normalizarEstudiosBackend(estudiosBackend: EstudioBackend[]): EstudioOp
   }));
 }
 
-function normalizarPedidosMock(): PedidoCoaching[] {
-  return pedidosCoachingMock.map((pedido, index) => {
-    const item = pedido as Record<string, unknown>;
-    const professorId = getString(item, 'professorPreferencialId', '');
-    const professorNome = getString(
-      item,
-      'professorPreferencialNome',
-      getProfessorNome(professorId)
-    );
-
-    return {
-      id: getString(item, 'id', `PED-MOCK-${index + 1}`),
-      alunoId: getString(item, 'alunoId', `aluno-mock-${index + 1}`),
-      alunoNome: getString(item, 'alunoNome', 'Aluno'),
-      tipoAluno: getString(item, 'tipoAluno', 'CRIANCA_JOVEM') as TipoAluno,
-      encarregadoId: getString(item, 'encarregadoId', ''),
-      encarregadoNome: getString(item, 'encarregadoNome', 'Encarregado'),
-      modalidade: getString(item, 'modalidade', modalidades[0] ?? 'Ballet'),
-      professorPreferencialId: professorId,
-      professorPreferencialNome: professorNome,
-      tipoCoaching: getString(item, 'tipoCoaching', 'Individual') as TipoCoaching,
-      outrosAlunosSugeridos: getString(item, 'outrosAlunosSugeridos', ''),
-      preferenciaHorario: getString(item, 'preferenciaHorario', 'A definir'),
-      observacoes: getString(item, 'observacoes', ''),
-      estado: normalizarEstadoMock(getString(item, 'estado', 'PENDENTE')),
-      motivoRejeicao: '',
-      vagaId: '',
-      isMock: true,
-    };
-  });
-}
-
-function normalizarVagasMock(): VagaCoaching[] {
-  return vagasCoachingMock.map((vaga, index) => {
-    const item = vaga as Record<string, unknown>;
-    const professorNome = getString(item, 'professorNome', 'Professor');
-    const professorId = getString(item, 'professorId', getProfessorIdByName(professorNome));
-    const salaNome = getString(item, 'salaNome', salas[0]?.nome ?? 'Estúdio 1');
-    const estudio = salas.find((sala) => sala.nome === salaNome);
-
-    return {
-      id: getString(item, 'id', `VAGA-MOCK-${index + 1}`),
-      professorId,
-      professorNome,
-      modalidade: getString(item, 'modalidade', modalidades[0] ?? 'Ballet'),
-      repeticao: getString(item, 'repeticao', 'SEMANAL') as RepeticaoVaga,
-      diaSemana: getString(item, 'diaSemana', 'Sábado'),
-      horaInicio: getString(item, 'horaInicio', '10:00'),
-      horaFim: getString(item, 'horaFim', '11:00'),
-      salaNome,
-      estudioId: estudio?.id ?? slugId(salaNome, 'estudio'),
-      dataInicio: getString(item, 'dataInicio', '2026-01-01'),
-      dataFim: getString(item, 'dataFim', '2026-12-31'),
-      estado: normalizarEstadoVagaMock(getString(item, 'estado', 'ABERTA')),
-      isMock: true,
-    };
-  });
-}
-
 function pedidoBackendParaUi(
   pedido: PedidoCoachingApp,
   professoresDisponiveis: ProfessorCoachingOption[] = []
 ): PedidoCoaching {
-  const textoDetalhes = [pedido.observacoes, pedido.notas].filter(Boolean).join('\n');
-  const professorId = pedido.professorId || pedido.professorPreferencialId;
+  const professorId = pedido.professorId || pedido.professorPreferencialId || '';
   const professorNomeGuardado = pedido.professorNome || pedido.professorPreferencialNome || '';
-  const professorNome =
-    professoresDisponiveis.find((professor) => professor.id === professorId)?.nome ??
-    getProfessorPedido(textoDetalhes, professorId, professorNomeGuardado);
-  const horarioGuardado = pedido.preferenciaHorario || pedido.horarioFinal || '';
+  const professorNome = professorId
+    ? professoresDisponiveis.find((professor) => professor.id === professorId)?.nome ??
+      getProfessorNome(professorId, professorNomeGuardado)
+    : '';
 
   return {
     id: pedido.id,
     alunoId: pedido.alunoId,
     alunoNome: pedido.alunoNome || pedido.alunoId,
-    tipoAluno: pedido.encarregadoId ? 'CRIANCA_JOVEM' : 'ADULTO',
+    tipoAluno: pedido.tipoAluno || (pedido.encarregadoId ? 'CRIANCA_JOVEM' : 'ADULTO'),
     encarregadoId: pedido.encarregadoId,
-    encarregadoNome: pedido.encarregadoId || '',
+    encarregadoNome: pedido.encarregadoNome || '',
     modalidade: pedido.modalidade,
     professorPreferencialId: professorId,
     professorPreferencialNome: professorNome,
     tipoCoaching: pedido.tipoCoaching || 'Individual',
     outrosAlunosSugeridos: pedido.outrosAlunosSugeridos || '',
-    preferenciaHorario: getHorarioPedido(textoDetalhes, horarioGuardado),
-    observacoes: limparObservacoesPedido(textoDetalhes),
+    preferenciaHorario: pedido.preferenciaHorario || pedido.horarioFinal || '',
+    observacoes: pedido.observacoes || '',
     estado: pedido.estado,
     motivoRejeicao: pedido.motivoRejeicao,
-    vagaId: pedido.vagaId ?? getDetalheDasNotas(textoDetalhes, 'Disponibilidade'),
+    vagaId: pedido.vagaId ?? '',
   };
 }
 
@@ -556,17 +466,19 @@ function vagaBackendParaUi(
   };
 }
 
-function criarPedidoForm(currentUser: CurrentUser): PedidoForm {
+function criarPedidoForm(currentUser: CurrentUser, alunos: AlunoAssociado[]): PedidoForm {
+  const primeiro = alunos[0];
+
   return {
-    alunoNome: currentUser.role === 'ALUNO' ? currentUser.name : 'Marta Silva',
-    tipoAluno: 'CRIANCA_JOVEM',
-    encarregadoNome: currentUser.role === 'ENCARREGADO' ? currentUser.name : 'João Silva',
+    alunoId: currentUser.role === 'ALUNO' ? currentUser.perfilId ?? '' : primeiro?.id ?? '',
+    alunoNome: currentUser.role === 'ALUNO' ? currentUser.name : primeiro?.nome ?? '',
     modalidade: modalidades[0] ?? 'Ballet',
     professorPreferencialId: '',
     tipoCoaching: 'Individual',
-    outrosAlunosSugeridos: '',
-    preferenciaHorario: 'Sábado de manhã',
-    observacoes: 'Preparação técnica para apresentação.',
+    alunosConvidados: '',
+    dataPreferida: '',
+    horaPreferida: '',
+    observacoes: '',
   };
 }
 
@@ -588,21 +500,28 @@ function criarVagaForm(currentUser: CurrentUser, estudios: EstudioOption[]): Vag
   };
 }
 
-function comporNotasPedido(form: PedidoForm) {
-  const partes = [
-    `Tipo de coaching: ${form.tipoCoaching}`,
-    `Preferência de horário: ${form.preferenciaHorario}`,
-  ];
+function formatarHorarioPreferido(data: string, hora: string) {
+  if (!data && !hora) return '';
 
-  if (form.outrosAlunosSugeridos.trim()) {
-    partes.push(`Outros alunos sugeridos: ${form.outrosAlunosSugeridos.trim()}`);
+  const partes: string[] = [];
+
+  if (data) {
+    const dataObj = new Date(`${data}T00:00:00`);
+
+    partes.push(
+      Number.isNaN(dataObj.getTime())
+        ? data
+        : new Intl.DateTimeFormat('pt-PT', {
+            weekday: 'long',
+            day: '2-digit',
+            month: 'long',
+          }).format(dataObj)
+    );
   }
 
-  if (form.observacoes.trim()) {
-    partes.push(`Observações: ${form.observacoes.trim()}`);
-  }
+  if (hora) partes.push(hora);
 
-  return partes.join('\n');
+  return partes.join(', ');
 }
 
 function getPageSubtitle(role: UserRole) {
@@ -633,9 +552,10 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
 
   const [estudios, setEstudios] = useState<EstudioOption[]>(normalizarEstudiosMock());
   const [professoresBd, setProfessoresBd] = useState<ProfessorCoachingOption[]>([]);
-  const [pedidos, setPedidos] = useState<PedidoCoaching[]>(normalizarPedidosMock());
-  const [vagas, setVagas] = useState<VagaCoaching[]>(normalizarVagasMock());
+  const [pedidos, setPedidos] = useState<PedidoCoaching[]>([]);
+  const [vagas, setVagas] = useState<VagaCoaching[]>([]);
   const [aulasHorario, setAulasHorario] = useState<AulaSemanalApp[]>([]);
+  const [alunosAssociados, setAlunosAssociados] = useState<AlunoAssociado[]>([]);
 
   const [estadoFiltro, setEstadoFiltro] = useState<'TODOS' | EstadoPedido>('TODOS');
   const [modalidadeFiltro, setModalidadeFiltro] = useState('TODAS');
@@ -643,17 +563,33 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
   const [modalPedidoAberta, setModalPedidoAberta] = useState(false);
   const [modalVagaAberta, setModalVagaAberta] = useState(false);
   const [modalAssociarAberta, setModalAssociarAberta] = useState(false);
+  const [pedidoEditandoId, setPedidoEditandoId] = useState<string | null>(null);
 
-  const [pedidoForm, setPedidoForm] = useState<PedidoForm>(criarPedidoForm(currentUser));
+  const [pedidoForm, setPedidoForm] = useState<PedidoForm>(() => criarPedidoForm(currentUser, []));
   const [vagaForm, setVagaForm] = useState<VagaForm>(criarVagaForm(currentUser, estudios));
 
   const [vagaSelecionada, setVagaSelecionada] = useState<VagaCoaching | null>(null);
   const [pedidoSelecionadoId, setPedidoSelecionadoId] = useState('');
 
-  const [mensagem, setMensagem] = useState('');
-  const [erroCarregamento, setErroCarregamento] = useState('');
+  const [toast, setToast] = useState<ToastData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  function notificar(mensagem: string, tipo: ToastData['tipo'] = 'sucesso') {
+    setToast({ mensagem: limparMensagem(mensagem), tipo });
+  }
+
+  function setMensagem(texto: string) {
+    if (!texto) {
+      setToast(null);
+      return;
+    }
+
+    const baixo = texto.toLowerCase();
+    const tipo = PALAVRAS_ERRO.some((palavra) => baixo.includes(palavra)) ? 'erro' : 'sucesso';
+
+    notificar(texto, tipo);
+  }
 
   const professorIdAtual = useMemo(
     () => (isProfessor ? getProfessorIdForUser(currentUser) : ''),
@@ -684,11 +620,11 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
   async function carregarDados() {
     try {
       setIsLoading(true);
-      setErroCarregamento('');
 
-      const [estudiosBackend, professoresBackend] = await Promise.all([
+      const [estudiosBackend, professoresBackend, alunosBackend] = await Promise.all([
         listarEstudios().catch(() => []),
         listarProfessoresCoaching().catch(() => []),
+        isEncarregado ? listarAlunosDaConta().catch(() => []) : Promise.resolve([]),
       ]);
 
       const estudiosNormalizados = normalizarEstudiosBackend(estudiosBackend);
@@ -697,6 +633,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
 
       setEstudios(estudiosFinais);
       setProfessoresBd(professoresFinais);
+      setAlunosAssociados(alunosBackend);
 
       const [pedidosBackend, vagasBackend, aulasBackend] = await Promise.all([
         listarPedidosCoaching().catch(() => []),
@@ -705,22 +642,10 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
       ]);
 
       setAulasHorario(aulasBackend);
-
-      setPedidos(
-        pedidosBackend.length > 0
-          ? pedidosBackend.map((pedido) => pedidoBackendParaUi(pedido, professoresFinais))
-          : normalizarPedidosMock()
-      );
-
-      setVagas(
-        vagasBackend.length > 0
-          ? vagasBackend.map((vaga) => vagaBackendParaUi(vaga, estudiosFinais, professoresFinais))
-          : normalizarVagasMock()
-      );
+      setPedidos(pedidosBackend.map((pedido) => pedidoBackendParaUi(pedido, professoresFinais)));
+      setVagas(vagasBackend.map((vaga) => vagaBackendParaUi(vaga, estudiosFinais, professoresFinais)));
     } catch (error) {
-      setErroCarregamento(getErrorMessage(error));
-      setPedidos(normalizarPedidosMock());
-      setVagas(normalizarVagasMock());
+      notificar(getErrorMessage(error), 'erro');
     } finally {
       setIsLoading(false);
     }
@@ -737,16 +662,15 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
         const encarregadoIdAtual = getPerfilId(currentUser, 'encarregado');
         return (
           pedido.encarregadoId === encarregadoIdAtual ||
-          pedido.encarregadoNome === currentUser.name ||
-          pedido.isMock
+          pedido.encarregadoNome === currentUser.name
         );
       }
 
       if (isProfessor) {
         return (
+          !pedido.professorPreferencialId ||
           pedido.professorPreferencialId === professorIdAtual ||
-          pedido.professorPreferencialNome === currentUser.name ||
-          !pedido.professorPreferencialId
+          pedido.professorPreferencialNome === currentUser.name
         );
       }
 
@@ -786,23 +710,62 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
   const totalAprovados = pedidosDoPerfil.filter((pedido) => pedido.estado === 'APROVADO').length;
   const totalGrupo = pedidosDoPerfil.filter((pedido) => pedido.tipoCoaching === 'Grupo').length;
 
+  const horaFimPreferida = adicionarUmaHora(pedidoForm.horaPreferida);
+  const diaPreferido = pedidoForm.dataPreferida
+    ? capitalizarDiaSemana(getDiaSemana(pedidoForm.dataPreferida))
+    : '';
+  const professorPreferencialOcupado = Boolean(
+    pedidoForm.professorPreferencialId &&
+      pedidoForm.dataPreferida &&
+      pedidoForm.horaPreferida &&
+      professorEstaOcupado(
+        pedidoForm.professorPreferencialId,
+        diaPreferido,
+        pedidoForm.horaPreferida,
+        horaFimPreferida
+      )
+  );
+  const sugestoesAlunosConvidados = Array.from(
+    new Set(
+      [...alunosAssociados.map((aluno) => aluno.nome), ...pedidos.map((pedido) => pedido.alunoNome)].filter(
+        Boolean
+      )
+    )
+  );
+  const podeEditarPedido = (pedido: PedidoCoaching) =>
+    (isEncarregado || isAluno) &&
+    (pedido.estado === 'PENDENTE' || pedido.estado === 'INTERESSE_REGISTADO');
+
   function abrirPedido() {
-    const formBase = criarPedidoForm(currentUser);
+    setPedidoEditandoId(null);
+    setPedidoForm(criarPedidoForm(currentUser, alunosAssociados));
+    setModalPedidoAberta(true);
+    setToast(null);
+  }
+
+  function abrirEdicaoPedido(pedido: PedidoCoaching) {
+    setPedidoEditandoId(pedido.id);
 
     setPedidoForm({
-      ...formBase,
-      professorPreferencialId: '',
+      alunoId: pedido.alunoId,
+      alunoNome: pedido.alunoNome,
+      modalidade: pedido.modalidade,
+      professorPreferencialId: pedido.professorPreferencialId,
+      tipoCoaching: pedido.tipoCoaching,
+      alunosConvidados: pedido.outrosAlunosSugeridos,
+      dataPreferida: '',
+      horaPreferida: '',
+      observacoes: pedido.observacoes,
     });
     setModalPedidoAberta(true);
-    setMensagem('');
+    setToast(null);
   }
 
   function abrirVaga() {
     setVagaForm(criarVagaForm(currentUser, estudios));
     setModalVagaAberta(true);
-    setMensagem('');
+    setToast(null);
   }
-
 
   function getAlunoDadosParaPedido() {
     if (isAluno) {
@@ -815,9 +778,11 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
       };
     }
 
+    const aluno = alunosAssociados[0];
+
     return {
-      alunoId: slugId('Marta Silva', 'aluno'),
-      alunoNome: 'Marta Silva',
+      alunoId: aluno?.id ?? '',
+      alunoNome: aluno?.nome ?? '',
       tipoAluno: 'CRIANCA_JOVEM' as TipoAluno,
       encarregadoId: getPerfilId(currentUser, 'encarregado'),
       encarregadoNome: currentUser.name,
@@ -921,63 +886,83 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
       setPedidos((atuais) => [novoPedido, ...atuais]);
       setMensagem('Pedido de inscrição enviado ao professor.');
     } catch (error) {
-      setMensagem(getErrorMessage(error));
+      notificar(getErrorMessage(error), 'erro');
     } finally {
       setIsSaving(false);
     }
   }
 
   async function criarPedido() {
-    if (!pedidoForm.alunoNome.trim()) {
-      setMensagem('Preenche o nome do aluno.');
+    if (!pedidoForm.alunoId && !pedidoForm.alunoNome.trim()) {
+      setMensagem('Escolhe o aluno do pedido.');
       return;
     }
 
-    if (!pedidoForm.preferenciaHorario.trim()) {
-      setMensagem('Indica uma preferência de horário.');
+    if (pedidoForm.tipoCoaching === 'Grupo' && !pedidoForm.alunosConvidados.trim()) {
+      setMensagem('Indica os alunos convidados para um coaching de grupo.');
       return;
     }
 
-    const professorNome = getProfessorNomeComLista(pedidoForm.professorPreferencialId, professoresOpcoes);
-    const alunoId = isAluno ? getPerfilId(currentUser, 'aluno') : slugId(pedidoForm.alunoNome, 'aluno');
-    const encarregadoId =
-      pedidoForm.tipoAluno === 'ADULTO'
-        ? ''
-        : isEncarregado
-          ? getPerfilId(currentUser, 'encarregado')
-          : slugId(pedidoForm.encarregadoNome, 'encarregado');
+    const professorNome = pedidoForm.professorPreferencialId
+      ? getProfessorNomeComLista(pedidoForm.professorPreferencialId, professoresOpcoes)
+      : '';
+    const alunoId = isAluno ? getPerfilId(currentUser, 'aluno') : pedidoForm.alunoId;
+    const encarregadoId = isEncarregado ? getPerfilId(currentUser, 'encarregado') : '';
+    const alunosConvidados =
+      pedidoForm.tipoCoaching === 'Grupo' ? pedidoForm.alunosConvidados.trim() : '';
+
+    const editando = Boolean(pedidoEditandoId);
+    const pedidoOriginal = pedidos.find((pedido) => pedido.id === pedidoEditandoId);
+    const preferenciaHorario =
+      formatarHorarioPreferido(pedidoForm.dataPreferida, pedidoForm.horaPreferida) ||
+      (editando ? pedidoOriginal?.preferenciaHorario ?? '' : '');
+
+    const payload = {
+      alunoId,
+      alunoNome: pedidoForm.alunoNome,
+      tipoAluno: 'CRIANCA_JOVEM' as TipoAluno,
+      encarregadoId: encarregadoId || null,
+      encarregadoNome: isEncarregado ? currentUser.name : '',
+      modalidade: pedidoForm.modalidade,
+      professorId: pedidoForm.professorPreferencialId || null,
+      professorNome,
+      tipoCoaching: pedidoForm.tipoCoaching,
+      outrosAlunosSugeridos: alunosConvidados,
+      preferenciaHorario,
+      observacoes: pedidoForm.observacoes.trim(),
+    };
 
     try {
       setIsSaving(true);
 
-      const pedidoCriado = await criarPedidoCoaching({
-        alunoId,
-        encarregadoId: encarregadoId || null,
-        modalidade: pedidoForm.modalidade,
-        notas: comporNotasPedido(pedidoForm),
-        professorId: pedidoForm.professorPreferencialId || null,
-      });
+      if (editando && pedidoEditandoId) {
+        const pedidoAtualizado = await atualizarPedidoCoaching(pedidoEditandoId, payload);
+
+        atualizarPedidoLocal({
+          ...pedidoBackendParaUi(pedidoAtualizado, professoresOpcoes),
+          alunoNome: pedidoForm.alunoNome,
+          professorPreferencialNome: professorNome,
+        });
+
+        setModalPedidoAberta(false);
+        setPedidoEditandoId(null);
+        setMensagem('Pedido de coaching atualizado com sucesso.');
+        return;
+      }
+
+      const pedidoCriado = await criarPedidoCoaching(payload);
 
       const novoPedido: PedidoCoaching = {
-        ...pedidoBackendParaUi(pedidoCriado),
+        ...pedidoBackendParaUi(pedidoCriado, professoresOpcoes),
         alunoNome: pedidoForm.alunoNome,
-        tipoAluno: pedidoForm.tipoAluno,
-        encarregadoId,
-        encarregadoNome: pedidoForm.tipoAluno === 'ADULTO' ? '' : pedidoForm.encarregadoNome,
-        professorPreferencialId: pedidoForm.professorPreferencialId,
         professorPreferencialNome: professorNome,
-        tipoCoaching: pedidoForm.tipoCoaching,
-        outrosAlunosSugeridos: pedidoForm.outrosAlunosSugeridos,
-        preferenciaHorario: pedidoForm.preferenciaHorario,
-        observacoes: pedidoForm.observacoes,
-        vagaId: '',
       };
 
       setPedidos((atuais) => [novoPedido, ...atuais]);
       setModalPedidoAberta(false);
-      setMensagem('Pedido de coaching criado no backend com sucesso.');
+      setMensagem('Pedido de coaching criado com sucesso.');
     } catch (error) {
-      setMensagem(getErrorMessage(error));
+      notificar(getErrorMessage(error), 'erro');
     } finally {
       setIsSaving(false);
     }
@@ -1018,7 +1003,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
       setModalVagaAberta(false);
       setMensagem('Disponibilidade de coaching criada no backend com sucesso.');
     } catch (error) {
-      setMensagem(getErrorMessage(error));
+      notificar(getErrorMessage(error), 'erro');
     } finally {
       setIsSaving(false);
     }
@@ -1062,7 +1047,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
 
       setMensagem('Pedido aceite pelo professor.');
     } catch (error) {
-      setMensagem(getErrorMessage(error));
+      notificar(getErrorMessage(error), 'erro');
     } finally {
       setIsSaving(false);
     }
@@ -1093,7 +1078,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
 
       setMensagem('Pedido aprovado pela coordenação.');
     } catch (error) {
-      setMensagem(getErrorMessage(error));
+      notificar(getErrorMessage(error), 'erro');
     } finally {
       setIsSaving(false);
     }
@@ -1130,7 +1115,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
 
       setMensagem(`Pedido rejeitado pelo ${origem}.`);
     } catch (error) {
-      setMensagem(getErrorMessage(error));
+      notificar(getErrorMessage(error), 'erro');
     } finally {
       setIsSaving(false);
     }
@@ -1157,6 +1142,23 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
         return horariosSobrepoem(horaInicio, horaFim, aula.horaInicio, aula.horaFim);
       }) ?? null
     );
+  }
+
+  function professorEstaOcupado(
+    professorId: string,
+    diaSemana: string,
+    horaInicio: string,
+    horaFim: string
+  ) {
+    const diaAlvo = normalizarDiaSemanaComparacao(diaSemana);
+
+    return aulasHorario.some((aula) => {
+      if (aula.estado === 'CANCELADA') return false;
+      if (aula.professorId !== professorId) return false;
+      if (normalizarDiaSemanaComparacao(aula.diaSemana) !== diaAlvo) return false;
+
+      return horariosSobrepoem(horaInicio, horaFim, aula.horaInicio, aula.horaFim);
+    });
   }
 
   function abrirAssociacao(vaga: VagaCoaching) {
@@ -1346,7 +1348,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
       setModalAssociarAberta(false);
       setMensagem(`Sessão de coaching criada e vaga fechada no backend.${mensagemHorario}`);
     } catch (error) {
-      setMensagem(getErrorMessage(error));
+      notificar(getErrorMessage(error), 'erro');
     } finally {
       setIsSaving(false);
     }
@@ -1368,7 +1370,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
             )}
 
             <span className="px-3 py-1 rounded-full bg-[#f0f6f3] text-[#5a7a6c] text-sm">
-              {isLoading ? 'A carregar...' : 'Ligado ao backend'}
+              {isLoading ? 'A carregar...' : 'Atualizado'}
             </span>
           </div>
 
@@ -1409,12 +1411,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
         </div>
       </div>
 
-      {(mensagem || erroCarregamento) && (
-        <div className="mb-6 rounded-xl border border-[#d4e8df] bg-[#f0f6f3] p-4 flex items-center gap-3">
-          <CheckCircle2 className="w-5 h-5 text-[#2d5f4f]" />
-          <p className="text-[#2d5f4f]">{mensagem || erroCarregamento}</p>
-        </div>
-      )}
+      <Toast toast={toast} onClose={() => setToast(null)} />
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
         <SummaryCard
@@ -1508,16 +1505,6 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div>
                   <div className="flex flex-wrap items-center gap-2 mb-3">
-                    <span className="px-3 py-1 rounded-full bg-[#f8faf9] border border-[#e8f0ed] text-[#5a7a6c] text-xs">
-                      {pedido.id}
-                    </span>
-
-                    {pedido.isMock && (
-                      <span className="px-3 py-1 rounded-full bg-[#f0f6f3] text-[#5a7a6c] text-xs">
-                        Mock
-                      </span>
-                    )}
-
                     <span className={`px-3 py-1 rounded-full text-xs ${estadoStyles[pedido.estado]}`}>
                       {estadoLabels[pedido.estado]}
                     </span>
@@ -1525,74 +1512,94 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
                     <span className="px-3 py-1 rounded-full bg-[#d4e8df] text-[#2d5f4f] text-xs">
                       {pedido.tipoCoaching}
                     </span>
+
+                    <span className="px-3 py-1 rounded-full bg-[#f0f6f3] text-[#5a7a6c] text-xs">
+                      {pedido.modalidade}
+                    </span>
                   </div>
 
-                  <h3 className="text-[#2d5f4f] mb-1">{pedido.alunoNome}</h3>
+                  <h3 className="text-[#2d5f4f] mb-1">{pedido.alunoNome || 'Aluno'}</h3>
 
-                  <p className="text-sm text-[#7a9a8c]">
-                    {pedido.tipoAluno === 'ADULTO'
-                      ? 'Aluno adulto'
-                      : pedido.encarregadoNome
-                        ? `Encarregado: ${pedido.encarregadoNome}`
-                        : 'Criança/jovem com encarregado'}
-                  </p>
+                  <p className="text-sm text-[#7a9a8c]">Aluno</p>
                 </div>
 
-                {podeAlterarEstado && (
-                  <div className="flex flex-wrap gap-2">
-                    {isProfessor &&
-                      (pedido.estado === 'PENDENTE' || pedido.estado === 'INTERESSE_REGISTADO') && (
+                <div className="flex flex-wrap gap-2">
+                  {podeEditarPedido(pedido) && (
+                    <button
+                      onClick={() => abrirEdicaoPedido(pedido)}
+                      className="px-3 py-2 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-[#f0f6f3] disabled:opacity-60"
+                    >
+                      Editar pedido
+                    </button>
+                  )}
+
+                  {podeAlterarEstado && (
+                    <>
+                      {isProfessor &&
+                        (pedido.estado === 'PENDENTE' || pedido.estado === 'INTERESSE_REGISTADO') && (
+                          <button
+                            onClick={() => void aceitarPedido(pedido)}
+                            disabled={isSaving}
+                            className="px-3 py-2 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] disabled:opacity-60"
+                          >
+                            Aceitar pedido
+                          </button>
+                        )}
+
+                      {isCoordenacao && pedido.estado === 'ACEITE_PROFESSOR' && (
                         <button
-                          onClick={() => void aceitarPedido(pedido)}
+                          onClick={() => void aprovarPedido(pedido)}
                           disabled={isSaving}
                           className="px-3 py-2 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] disabled:opacity-60"
                         >
-                          Aceitar pedido
+                          Aprovar
                         </button>
                       )}
 
-                    {isCoordenacao && pedido.estado === 'ACEITE_PROFESSOR' && (
-                      <button
-                        onClick={() => void aprovarPedido(pedido)}
-                        disabled={isSaving}
-                        className="px-3 py-2 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] disabled:opacity-60"
-                      >
-                        Aprovar
-                      </button>
-                    )}
-
-                    {((isProfessor &&
-                      (pedido.estado === 'PENDENTE' || pedido.estado === 'INTERESSE_REGISTADO')) ||
-                      (isCoordenacao && pedido.estado !== 'REJEITADO' && pedido.estado !== 'APROVADO')) && (
-                      <button
-                        onClick={() => void rejeitarPedido(pedido)}
-                        disabled={isSaving}
-                        className="px-3 py-2 rounded-xl border border-[#ffd2d2] text-[#9a3a3a] hover:bg-[#fff5f5] disabled:opacity-60"
-                      >
-                        Recusar pedido
-                      </button>
-                    )}
-                  </div>
-                )}
+                      {((isProfessor &&
+                        (pedido.estado === 'PENDENTE' || pedido.estado === 'INTERESSE_REGISTADO')) ||
+                        (isCoordenacao && pedido.estado !== 'REJEITADO' && pedido.estado !== 'APROVADO')) && (
+                        <button
+                          onClick={() => void rejeitarPedido(pedido)}
+                          disabled={isSaving}
+                          className="px-3 py-2 rounded-xl border border-[#ffd2d2] text-[#9a3a3a] hover:bg-[#fff5f5] disabled:opacity-60"
+                        >
+                          Recusar pedido
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-5">
-                <Info label="Modalidade" value={pedido.modalidade} />
-                <Info label="Professor" value={pedido.professorPreferencialNome} />
-                <Info label="Horário / agendamento" value={pedido.preferenciaHorario} />
+                <Info
+                  label="Professor preferencial"
+                  value={pedido.professorPreferencialNome || 'Sem preferência'}
+                />
+                <Info label="Horário preferido" value={pedido.preferenciaHorario || 'A combinar'} />
+                <Info label="Tipo de coaching" value={pedido.tipoCoaching} />
               </div>
 
-              {pedido.outrosAlunosSugeridos && (
+              {!isEncarregado && !isAluno && pedido.encarregadoNome && (
+                <div className="mt-4">
+                  <Info label="Encarregado de educação" value={pedido.encarregadoNome} />
+                </div>
+              )}
+
+              {pedido.tipoCoaching === 'Grupo' && pedido.outrosAlunosSugeridos && (
                 <div className="mt-4 rounded-xl bg-[#f8faf9] border border-[#e8f0ed] p-4">
-                  <p className="text-xs text-[#7a9a8c] mb-1">Outros alunos sugeridos</p>
+                  <p className="text-xs text-[#7a9a8c] mb-1">Alunos convidados</p>
                   <p className="text-sm text-[#5a7a6c]">{pedido.outrosAlunosSugeridos}</p>
                 </div>
               )}
 
-              <div className="mt-4 rounded-xl bg-[#f8faf9] border border-[#e8f0ed] p-4">
-                <p className="text-xs text-[#7a9a8c] mb-1">Observações</p>
-                <p className="text-sm text-[#5a7a6c] whitespace-pre-line">{pedido.observacoes || 'Sem observações adicionais.'}</p>
-              </div>
+              {pedido.observacoes && (
+                <div className="mt-4 rounded-xl bg-[#f8faf9] border border-[#e8f0ed] p-4">
+                  <p className="text-xs text-[#7a9a8c] mb-1">Observações</p>
+                  <p className="text-sm text-[#5a7a6c] whitespace-pre-line">{pedido.observacoes}</p>
+                </div>
+              )}
 
               {pedido.motivoRejeicao && (
                 <div className="mt-4 rounded-xl bg-[#fff5f5] border border-[#ffd2d2] p-4">
@@ -1691,46 +1698,44 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
       {modalPedidoAberta && (
         <Modal onClose={() => setModalPedidoAberta(false)}>
           <ModalHeader
-            title="Novo pedido de coaching"
-            subtitle="Cria um pedido associado ao perfil ativo."
+            title={pedidoEditandoId ? 'Editar pedido de coaching' : 'Novo pedido de coaching'}
+            subtitle="Escolhe o aluno, o professor e a preferência de horário."
             onClose={() => setModalPedidoAberta(false)}
           />
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <FormField label="Aluno">
-              <input
-                value={pedidoForm.alunoNome}
-                onChange={(event) => atualizarPedidoForm('alunoNome', event.target.value)}
-                disabled={isAluno}
-                className="inputEntartes disabled:opacity-70"
-              />
-            </FormField>
-
-            <FormField label="Tipo de aluno">
-              <select
-                value={pedidoForm.tipoAluno}
-                onChange={(event) =>
-                  atualizarPedidoForm('tipoAluno', event.target.value as TipoAluno)
-                }
-                className="inputEntartes"
-              >
-                <option value="CRIANCA_JOVEM">Criança/jovem com encarregado</option>
-                <option value="ADULTO">Adulto</option>
-              </select>
-            </FormField>
-
-            {pedidoForm.tipoAluno !== 'ADULTO' && (
-              <FormField label="Encarregado de educação">
+              {isAluno ? (
                 <input
-                  value={pedidoForm.encarregadoNome}
-                  onChange={(event) =>
-                    atualizarPedidoForm('encarregadoNome', event.target.value)
-                  }
-                  disabled={isEncarregado}
+                  value={pedidoForm.alunoNome}
+                  disabled
                   className="inputEntartes disabled:opacity-70"
                 />
-              </FormField>
-            )}
+              ) : (
+                <select
+                  value={pedidoForm.alunoId}
+                  onChange={(event) => {
+                    const aluno = alunosAssociados.find((item) => item.id === event.target.value);
+                    setPedidoForm((atual) => ({
+                      ...atual,
+                      alunoId: event.target.value,
+                      alunoNome: aluno?.nome ?? '',
+                    }));
+                  }}
+                  className="inputEntartes"
+                >
+                  {alunosAssociados.length === 0 && (
+                    <option value="">Sem alunos associados à conta</option>
+                  )}
+
+                  {alunosAssociados.map((aluno) => (
+                    <option value={aluno.id} key={aluno.id}>
+                      {aluno.nome}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </FormField>
 
             <FormField label="Modalidade">
               <select
@@ -1752,7 +1757,9 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
                 onChange={(event) =>
                   atualizarPedidoForm('professorPreferencialId', event.target.value)
                 }
-                className="inputEntartes"
+                className={`inputEntartes ${
+                  professorPreferencialOcupado ? 'border-[#e0a3a3] text-[#9a3a3a]' : ''
+                }`}
               >
                 <option value="">Sem preferência</option>
 
@@ -1762,6 +1769,12 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
                   </option>
                 ))}
               </select>
+
+              {professorPreferencialOcupado && (
+                <span className="text-xs text-[#9a3a3a]">
+                  Este professor já tem uma aula/sessão no horário escolhido.
+                </span>
+              )}
             </FormField>
 
             <FormField label="Tipo de coaching">
@@ -1777,33 +1790,52 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
               </select>
             </FormField>
 
-            <FormField label="Preferência de horário">
+            <FormField label="Data preferida">
               <input
-                value={pedidoForm.preferenciaHorario}
-                onChange={(event) =>
-                  atualizarPedidoForm('preferenciaHorario', event.target.value)
-                }
-                placeholder="Ex.: sexta à noite"
+                value={pedidoForm.dataPreferida}
+                onChange={(event) => atualizarPedidoForm('dataPreferida', event.target.value)}
+                type="date"
                 className="inputEntartes"
               />
             </FormField>
 
-            <FormField label="Outros alunos sugeridos">
+            <FormField label="Hora preferida">
               <input
-                value={pedidoForm.outrosAlunosSugeridos}
-                onChange={(event) =>
-                  atualizarPedidoForm('outrosAlunosSugeridos', event.target.value)
-                }
-                placeholder="Ex.: Marta Silva, Inês Costa"
+                value={pedidoForm.horaPreferida}
+                onChange={(event) => atualizarPedidoForm('horaPreferida', event.target.value)}
+                type="time"
                 className="inputEntartes"
               />
             </FormField>
+
+            {pedidoForm.tipoCoaching === 'Grupo' && (
+              <div className="md:col-span-2">
+                <FormField label="Alunos convidados">
+                  <input
+                    value={pedidoForm.alunosConvidados}
+                    onChange={(event) =>
+                      atualizarPedidoForm('alunosConvidados', event.target.value)
+                    }
+                    list="sugestoes-alunos-convidados"
+                    placeholder="Começa a escrever o nome de um aluno..."
+                    className="inputEntartes"
+                  />
+
+                  <datalist id="sugestoes-alunos-convidados">
+                    {sugestoesAlunosConvidados.map((nome) => (
+                      <option value={nome} key={nome} />
+                    ))}
+                  </datalist>
+                </FormField>
+              </div>
+            )}
 
             <div className="md:col-span-2">
               <FormField label="Observações">
                 <textarea
                   value={pedidoForm.observacoes}
                   onChange={(event) => atualizarPedidoForm('observacoes', event.target.value)}
+                  placeholder="Notas adicionais (opcional)"
                   className="inputEntartes min-h-24 resize-none"
                 />
               </FormField>
@@ -1812,7 +1844,13 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
 
           <ModalActions
             cancelLabel="Cancelar"
-            confirmLabel={isSaving ? 'A submeter...' : 'Submeter pedido'}
+            confirmLabel={
+              isSaving
+                ? 'A guardar...'
+                : pedidoEditandoId
+                  ? 'Guardar alterações'
+                  : 'Submeter pedido'
+            }
             onCancel={() => setModalPedidoAberta(false)}
             onConfirm={() => void criarPedido()}
           />
@@ -1954,7 +1992,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
 
               {pedidosAssociaveis.map((pedido) => (
                 <option value={pedido.id} key={pedido.id}>
-                  {pedido.id} · {pedido.alunoNome} · {pedido.modalidade}
+                  {pedido.alunoNome} · {pedido.modalidade}
                 </option>
               ))}
             </select>

@@ -18,12 +18,6 @@ import {
   X,
 } from 'lucide-react';
 
-import {
-  aulasSemanais,
-  eventosMock,
-  feriadosEInterrupcoesMock,
-  salas,
-} from '../data/mockEntartes';
 
 import { ApiError } from '../services/api';
 import {
@@ -62,6 +56,12 @@ import {
   type InterrupcaoApp,
   type TipoInterrupcaoBackend,
 } from '../services/interrupcoesService';
+import {
+  Toast,
+  inferirTipoMensagem,
+  limparMensagemBackend,
+  type ToastData,
+} from '../components/Toast';
 
 type EstadoPedidoCoaching = EstadoPedidoCoachingBackend;
 type EstadoVaga = EstadoVagaBackend;
@@ -214,44 +214,6 @@ const estadoFinanceiroStyles: Record<EstadoFinanceiroBackend, string> = {
   CANCELADO: 'bg-[#ffe0e0] text-[#9a3a3a]',
 };
 
-function getString(item: Record<string, unknown>, key: string, fallback = '') {
-  const value = item[key];
-
-  if (typeof value === 'string') {
-    return value;
-  }
-
-  return fallback;
-}
-
-function getNumber(item: Record<string, unknown>, key: string, fallback = 0) {
-  const value = item[key];
-
-  if (typeof value === 'number') {
-    return value;
-  }
-
-  if (typeof value === 'string') {
-    const parsed = Number(value);
-
-    if (!Number.isNaN(parsed)) {
-      return parsed;
-    }
-  }
-
-  return fallback;
-}
-
-function getBoolean(item: Record<string, unknown>, key: string, fallback = false) {
-  const value = item[key];
-
-  if (typeof value === 'boolean') {
-    return value;
-  }
-
-  return fallback;
-}
-
 function getErrorMessage(error: unknown) {
   if (error instanceof ApiError) {
     return error.message;
@@ -287,47 +249,6 @@ function getProfessorNomeDaLista(
   return fallback && fallback !== professorId ? fallback : professorId;
 }
 
-function normalizarSalasMock(): Sala[] {
-  return salas.map((sala, index) => {
-    const item = sala as Record<string, unknown>;
-
-    return {
-      id: getString(item, 'id', `sala-${index}`),
-      nome: getString(item, 'nome', `Sala ${index + 1}`),
-      tipo: getString(item, 'tipo', 'Estúdio'),
-      capacidade: getNumber(item, 'capacidade', 20),
-      ativa: getBoolean(item, 'ativa', true),
-      modalidadesPermitidas: [],
-    };
-  });
-}
-
-function normalizarTipoInterrupcao(tipo: string): TipoInterrupcaoBackend {
-  const tipoNormalizado = tipo.trim().toUpperCase();
-
-  if (tipoNormalizado.includes('INTERRUP')) return 'INTERRUPCAO';
-  if (tipoNormalizado.includes('EVENT')) return 'EVENTO';
-  if (tipoNormalizado.includes('OUTRO')) return 'OUTRO';
-
-  return 'FERIADO';
-}
-
-function normalizarInterrupcoesMock(): Interrupcao[] {
-  return feriadosEInterrupcoesMock.map((interrupcao, index) => {
-    const item = interrupcao as Record<string, unknown>;
-
-    return {
-      id: getString(item, 'id', `INT-${index + 1}`),
-      nome: getString(item, 'nome', 'Interrupção'),
-      data: getString(item, 'data', '2026-01-01'),
-      dataFim: getString(item, 'dataFim', ''),
-      tipo: normalizarTipoInterrupcao(getString(item, 'tipo', 'FERIADO')),
-      escolaEncerrada: getBoolean(item, 'escolaEncerrada', true),
-      observacoes: getString(item, 'observacoes', ''),
-    };
-  });
-}
-
 function mapInterrupcaoBackendParaCoordenacao(
   interrupcao: InterrupcaoApp
 ): Interrupcao {
@@ -340,20 +261,6 @@ function mapInterrupcaoBackendParaCoordenacao(
     escolaEncerrada: interrupcao.escolaEncerrada,
     observacoes: interrupcao.observacoes,
   };
-}
-
-function normalizarEventosMock(): EventoResumo[] {
-  return eventosMock.map((evento, index) => {
-    const item = evento as Record<string, unknown>;
-
-    return {
-      id: getString(item, 'id', `EVENTO-${index + 1}`),
-      titulo: getString(item, 'titulo', getString(item, 'nome', 'Evento')),
-      data: getString(item, 'data', '2026-01-01'),
-      local: getString(item, 'local', 'Local a definir'),
-      estado: getString(item, 'estado', 'ATIVO'),
-    };
-  });
 }
 
 function mapEstudioParaSala(estudio: EstudioApp): Sala {
@@ -560,20 +467,15 @@ function splitModalidades(texto: string) {
 }
 
 export default function Coordenacao() {
-  const salasMock = useMemo(() => normalizarSalasMock(), []);
-  const eventosMockResumo = useMemo(() => normalizarEventosMock(), []);
-
-  const [salasLocais, setSalasLocais] = useState<Sala[]>(salasMock);
-  const [eventosResumo, setEventosResumo] = useState<EventoResumo[]>(eventosMockResumo);
+  const [salasLocais, setSalasLocais] = useState<Sala[]>([]);
+  const [eventosResumo, setEventosResumo] = useState<EventoResumo[]>([]);
   const [professoresLista, setProfessoresLista] = useState<Professor[]>([]);
 
   const [pedidos, setPedidos] = useState<PedidoCoaching[]>([]);
 
   const [vagas, setVagas] = useState<VagaCoaching[]>([]);
 
-  const [interrupcoes, setInterrupcoes] = useState<Interrupcao[]>(() =>
-    normalizarInterrupcoesMock()
-  );
+  const [interrupcoes, setInterrupcoes] = useState<Interrupcao[]>([]);
 
   const [registosFinanceiros, setRegistosFinanceiros] = useState<RegistoFinanceiroApp[]>([]);
   const [totalFinanceiro, setTotalFinanceiro] = useState(0);
@@ -584,9 +486,26 @@ export default function Coordenacao() {
     'TODOS'
   );
 
-  const [mensagem, setMensagem] = useState('');
-  const [erro, setErro] = useState('');
+  const [toast, setToast] = useState<ToastData | null>(null);
   const [loading, setLoading] = useState(false);
+
+  function setMensagem(texto: string) {
+    if (!texto) {
+      setToast(null);
+      return;
+    }
+
+    setToast({ mensagem: limparMensagemBackend(texto), tipo: inferirTipoMensagem(texto) });
+  }
+
+  function setErro(texto: string) {
+    if (!texto) {
+      setToast(null);
+      return;
+    }
+
+    setToast({ mensagem: limparMensagemBackend(texto), tipo: 'erro' });
+  }
 
   const [pedidoEditandoId, setPedidoEditandoId] = useState<string | null>(null);
   const [pedidoForm, setPedidoForm] = useState<PedidoForm | null>(null);
@@ -635,7 +554,7 @@ export default function Coordenacao() {
       ]);
 
       let professoresBase: Professor[] = [];
-      let salasBase = salasMock;
+      let salasBase: Sala[] = [];
 
       if (professoresResult.status === 'fulfilled') {
         professoresBase = normalizarProfessoresBackend(professoresResult.value);
@@ -871,7 +790,7 @@ export default function Coordenacao() {
           atuais.map((sala) => (sala.id === salaEditandoId ? salaAtualizada : sala))
         );
 
-        setMensagem('Sala atualizada localmente. O backend atual ainda só permite criar/listar estúdios.');
+        setMensagem('Sala atualizada.');
         setModalSalaAberta(false);
         return;
       }
@@ -884,7 +803,7 @@ export default function Coordenacao() {
       });
 
       setSalasLocais((atuais) => [mapEstudioParaSala(estudioCriado), ...atuais]);
-      setMensagem('Sala/estúdio criado com sucesso no backend.');
+      setMensagem('Sala/estúdio criado com sucesso.');
       setModalSalaAberta(false);
     } catch (error) {
       setErro(getErrorMessage(error));
@@ -949,7 +868,7 @@ export default function Coordenacao() {
           )
         );
 
-        setMensagem('Interrupção atualizada com sucesso no backend.');
+        setMensagem('Interrupção atualizada com sucesso.');
         setModalInterrupcaoAberta(false);
         return;
       }
@@ -967,7 +886,7 @@ export default function Coordenacao() {
         mapInterrupcaoBackendParaCoordenacao(novaInterrupcao),
         ...atuais,
       ]);
-      setMensagem('Interrupção criada com sucesso no backend.');
+      setMensagem('Interrupção criada com sucesso.');
       setModalInterrupcaoAberta(false);
     } catch (error) {
       setErro(getErrorMessage(error));
@@ -979,7 +898,7 @@ export default function Coordenacao() {
       setErro('');
       await removerInterrupcao(interrupcaoId);
       setInterrupcoes((atuais) => atuais.filter((item) => item.id !== interrupcaoId));
-      setMensagem('Interrupção removida com sucesso no backend.');
+      setMensagem('Interrupção removida com sucesso.');
     } catch (error) {
       setErro(getErrorMessage(error));
     }
@@ -1042,8 +961,8 @@ export default function Coordenacao() {
       setVagaForm(null);
       setMensagem(
         vagaForm.estado === 'FECHADA'
-          ? 'Vaga fechada no backend.'
-          : 'Vaga atualizada localmente. O backend atual só permite fechar vagas.'
+          ? 'Vaga fechada.'
+          : 'Vaga atualizada.'
       );
     } catch (error) {
       setErro(getErrorMessage(error));
@@ -1155,7 +1074,7 @@ export default function Coordenacao() {
             </span>
 
             <span className="px-3 py-1 rounded-full bg-[#d4e8df] text-[#2d5f4f] text-sm">
-              Backend ligado
+              Dados atualizados
             </span>
           </div>
 
@@ -1194,19 +1113,7 @@ export default function Coordenacao() {
         </div>
       </div>
 
-      {mensagem && (
-        <div className="mb-6 rounded-xl border border-[#d4e8df] bg-[#f0f6f3] p-4 flex items-center gap-3">
-          <CheckCircle2 className="w-5 h-5 text-[#2d5f4f]" />
-          <p className="text-[#2d5f4f]">{mensagem}</p>
-        </div>
-      )}
-
-      {erro && (
-        <div className="mb-6 rounded-xl border border-[#ffd2d2] bg-[#fff5f5] p-4 flex items-center gap-3">
-          <AlertCircle className="w-5 h-5 text-[#9a3a3a]" />
-          <p className="text-[#9a3a3a]">{erro}</p>
-        </div>
-      )}
+      <Toast toast={toast} onClose={() => setToast(null)} />
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
         <SummaryCard
@@ -1349,7 +1256,7 @@ export default function Coordenacao() {
           <div className="space-y-3">
             {registosFinanceiros.length === 0 ? (
               <p className="text-sm text-[#7a9a8c]">
-                Ainda não existem registos financeiros no backend.
+                Ainda não existem registos financeiros.
               </p>
             ) : (
               registosFinanceiros.slice(0, 5).map((registo) => (
@@ -1402,15 +1309,6 @@ export default function Coordenacao() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {salasLocais.map((sala) => {
-              const totalAulas = aulasSemanais.filter((aula) => {
-                const item = aula as Record<string, unknown>;
-
-                return (
-                  getString(item, 'salaId') === sala.id ||
-                  getString(item, 'salaNome') === sala.nome
-                );
-              }).length;
-
               return (
                 <article
                   key={sala.id}
@@ -1434,7 +1332,7 @@ export default function Coordenacao() {
                   </div>
 
                   <p className="text-sm text-[#5a7a6c] mb-3">
-                    Capacidade: {sala.capacidade} · {totalAulas} aulas associadas
+                    Capacidade: {sala.capacidade}
                   </p>
 
                   {sala.modalidadesPermitidas.length > 0 && (

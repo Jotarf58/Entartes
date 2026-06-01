@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   Brush,
   CalendarDays,
-  CheckCircle2,
   Clock,
   ExternalLink,
   FileText,
@@ -16,7 +15,13 @@ import {
   X,
 } from 'lucide-react';
 
-import { eventosMock } from '../data/mockEntartes';
+import {
+  Toast,
+  inferirTipoMensagem,
+  limparMensagemBackend,
+  type ToastData,
+} from '../components/Toast';
+
 import {
   adicionarComunicadoEvento,
   atualizarEvento,
@@ -84,67 +89,12 @@ const estadoEventoLabels: Record<EstadoEvento, string> = {
   CONCLUIDO: 'Concluído',
 };
 
-function getStringValue(
-  item: Record<string, unknown>,
-  keys: string[],
-  fallback = ''
-) {
-  for (const key of keys) {
-    const value = item[key];
-
-    if (typeof value === 'string' && value.trim()) {
-      return value;
-    }
-  }
-
-  return fallback;
-}
-
 function getEstadoEvento(value: string): EstadoEvento {
   if (value === 'CANCELADO' || value === 'CONCLUIDO') {
     return value;
   }
 
   return 'ATIVO';
-}
-
-function getStringList(item: Record<string, unknown>, keys: string[]) {
-  for (const key of keys) {
-    const value = item[key];
-
-    if (Array.isArray(value)) {
-      return value.filter((entry): entry is string => typeof entry === 'string');
-    }
-
-    if (typeof value === 'string' && value.trim()) {
-      return [value];
-    }
-  }
-
-  return [];
-}
-
-function normalizeEventos(): EventoView[] {
-  return eventosMock.map((evento, index) => {
-    const item = evento as Record<string, unknown>;
-
-    return {
-      id: getStringValue(item, ['id', '_id'], `evento-${index}`),
-      titulo: getStringValue(item, ['titulo', 'nome'], 'Evento'),
-      data: getStringValue(item, ['data', 'dataEvento'], ''),
-      local: getStringValue(item, ['local', 'localizacao'], 'Local a definir'),
-      estado: getEstadoEvento(getStringValue(item, ['estado'], 'ATIVO')),
-      descricao: getStringValue(item, ['descricao', 'comunicado'], ''),
-      apresentacoes: getStringList(item, ['sessoes', 'apresentacoes', 'horarios']),
-      formularioUrl: getStringValue(item, ['formularioUrl', 'linkFormulario', 'urlFormulario']),
-      figurino: getStringList(item, ['figurino', 'figurinos']),
-      acessorios: getStringList(item, ['acessorios', 'acessórios']),
-      penteado: getStringValue(item, ['penteado', 'cabelo']),
-      maquilhagem: getStringValue(item, ['maquilhagem', 'makeup']),
-      observacoes: getStringValue(item, ['observacoes', 'notas']),
-      comunicados: [],
-    };
-  });
 }
 
 function criarEventoFormVazio(): EventoForm {
@@ -328,13 +278,23 @@ export default function Eventos({ currentUser }: { currentUser: CurrentUser }) {
 
   const podeCriarEvento = isCoordenacao;
 
-  const [eventos, setEventos] = useState<EventoView[]>(() => normalizeEventos());
+  const [eventos, setEventos] = useState<EventoView[]>([]);
   const [carregandoEventos, setCarregandoEventos] = useState(true);
   const [operacaoEmCurso, setOperacaoEmCurso] = useState(false);
   const [pesquisa, setPesquisa] = useState('');
   const [estadoFiltro, setEstadoFiltro] = useState<'TODOS' | EstadoEvento>('TODOS');
 
-  const [mensagem, setMensagem] = useState('');
+  const [toast, setToast] = useState<ToastData | null>(null);
+
+  function setMensagem(texto: string) {
+    if (!texto) {
+      setToast(null);
+      return;
+    }
+
+    setToast({ mensagem: limparMensagemBackend(texto), tipo: inferirTipoMensagem(texto) });
+  }
+
   const [modalEventoAberta, setModalEventoAberta] = useState(false);
   const [modoEdicao, setModoEdicao] = useState(false);
   const [eventoEditandoId, setEventoEditandoId] = useState<string | null>(null);
@@ -364,17 +324,13 @@ export default function Eventos({ currentUser }: { currentUser: CurrentUser }) {
           return;
         }
 
-        if (eventosBackend.length > 0) {
-          setEventos(eventosBackend.map(eventoAppParaView));
-        } else {
-          setMensagem('Backend sem eventos registados. Mantive os exemplos mock para demonstração.');
-        }
+        setEventos(eventosBackend.map(eventoAppParaView));
       } catch (error) {
         if (!mounted) {
           return;
         }
 
-        setMensagem(`Não foi possível carregar eventos do backend. Mantive os exemplos mock. ${getErrorMessage(error)}`);
+        setMensagem(`Não foi possível carregar eventos. ${getErrorMessage(error)}`);
       } finally {
         if (mounted) {
           setCarregandoEventos(false);
@@ -514,7 +470,7 @@ export default function Eventos({ currentUser }: { currentUser: CurrentUser }) {
 
       setEventos((atuais) => [novoEvento, ...atuais]);
       fecharModalEvento();
-      setMensagem('Evento/comunicado criado com sucesso no backend.');
+      setMensagem('Evento/comunicado criado com sucesso.');
     } catch (error) {
       setMensagem(`Não foi possível guardar o evento. ${getErrorMessage(error)}`);
     } finally {
@@ -724,16 +680,11 @@ export default function Eventos({ currentUser }: { currentUser: CurrentUser }) {
         )}
       </div>
 
-      {mensagem && (
-        <div className="mb-6 rounded-xl border border-[#d4e8df] bg-[#f0f6f3] p-4 flex items-center gap-3">
-          <CheckCircle2 className="w-5 h-5 text-[#2d5f4f]" />
-          <p className="text-[#2d5f4f]">{mensagem}</p>
-        </div>
-      )}
+      <Toast toast={toast} onClose={() => setToast(null)} />
 
       {carregandoEventos && (
         <div className="mb-6 rounded-xl border border-[#d9e8e1] bg-white p-4 text-[#5a7a6c]">
-          A carregar eventos do backend...
+          A carregar eventos...
         </div>
       )}
 
@@ -1004,7 +955,7 @@ export default function Eventos({ currentUser }: { currentUser: CurrentUser }) {
         <Modal onClose={fecharModalEvento}>
           <ModalHeader
             title={modoEdicao ? 'Gerir evento/comunicado' : 'Criar evento/comunicado'}
-            subtitle="Título, descrição, data e estado ficam guardados no backend. Os detalhes extra ficam visíveis nesta sessão."
+            subtitle="Título, descrição, data e estado ficam guardados. Os detalhes extra ficam visíveis nesta sessão."
             onClose={fecharModalEvento}
           />
 

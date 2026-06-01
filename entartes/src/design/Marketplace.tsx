@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   Calendar,
-  CheckCircle2,
   Image as ImageIcon,
   Search,
   ShieldCheck,
@@ -12,11 +11,13 @@ import {
   X,
 } from 'lucide-react';
 
+import { modalidades, type TipoFigurinoAcessorio } from '../data/mockEntartes';
 import {
-  figurinosAcessoriosMock,
-  modalidades,
-  type TipoFigurinoAcessorio,
-} from '../data/mockEntartes';
+  Toast,
+  inferirTipoMensagem,
+  limparMensagemBackend,
+  type ToastData,
+} from '../components/Toast';
 
 import {
   aceitarRequisicaoInventario,
@@ -242,21 +243,6 @@ function normalizarItemBackend(item: MarketplaceItemApp): MarketplaceItem {
   };
 }
 
-function criarItensMock(): MarketplaceItem[] {
-  return figurinosAcessoriosMock.map((item) => ({
-    ...item,
-    imagemUrl: item.imagemUrl ?? '',
-    estadoAnuncio: 'ATIVO',
-    alugadoDesde: '',
-    alugadoAte: '',
-    utilizadorId: 'mock',
-    origemNome: item.origem ?? 'Família Ent’artes',
-    contactoEmail: 'geral@entartes.pt',
-    contactoTelefone: '910 000 000',
-    requisicoes: [],
-  })) as MarketplaceItem[];
-}
-
 function getSubtitle(role: UserRole) {
   if (role === 'ALUNO') {
     return 'Consulta figurinos, acessórios e materiais disponíveis para eventos.';
@@ -413,7 +399,7 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
   );
   const mostraMeusAnuncios = isEncarregado || isProfessor || isCoordenacao;
 
-  const [itens, setItens] = useState<MarketplaceItem[]>(criarItensMock);
+  const [itens, setItens] = useState<MarketplaceItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -428,7 +414,16 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
 
   const [detalheItem, setDetalheItem] = useState<MarketplaceItem | null>(null);
   const [pedidosAluguer, setPedidosAluguer] = useState<string[]>([]);
-  const [mensagemSucesso, setMensagemSucesso] = useState('');
+  const [toast, setToast] = useState<ToastData | null>(null);
+
+  function setMensagemSucesso(texto: string) {
+    if (!texto) {
+      setToast(null);
+      return;
+    }
+
+    setToast({ mensagem: limparMensagemBackend(texto), tipo: inferirTipoMensagem(texto) });
+  }
 
   const [itemAluguer, setItemAluguer] = useState<MarketplaceItem | null>(null);
   const [aluguerInicio, setAluguerInicio] = useState('');
@@ -454,17 +449,11 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
 
         const itensBackend = await listarInventario();
 
-        if (itensBackend.length > 0) {
-          setItens(itensBackend.map(normalizarItemBackend));
-        } else {
-          setItens(criarItensMock());
-        }
+        setItens(itensBackend.map(normalizarItemBackend));
       } catch (error) {
-        setItens(criarItensMock());
+        setItens([]);
         setMensagemSucesso(
-          `Não foi possível carregar o inventário do backend. A mostrar dados mock. ${getErrorMessage(
-            error
-          )}`
+          `Não foi possível carregar o inventário. ${getErrorMessage(error)}`
         );
       } finally {
         setIsLoading(false);
@@ -657,7 +646,7 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
         },
         ...atuais,
       ]);
-      setMensagemSucesso('Figurino/acessório publicado com sucesso no backend.');
+      setMensagemSucesso('Figurino/acessório publicado com sucesso.');
       fecharModal();
     } catch (error) {
       setMensagemSucesso(getErrorMessage(error));
@@ -953,12 +942,7 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
         )}
       </div>
 
-      {mensagemSucesso && (
-        <div className="mb-6 rounded-xl border border-[#d4e8df] bg-[#f0f6f3] p-4 flex items-center gap-3">
-          <CheckCircle2 className="w-5 h-5 text-[#2d5f4f]" />
-          <p className="text-[#2d5f4f]">{mensagemSucesso}</p>
-        </div>
-      )}
+      <Toast toast={toast} onClose={() => setToast(null)} />
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
         <SummaryCard

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   CalendarDays,
-  CheckCircle2,
   Clock,
   Edit3,
   Filter,
@@ -12,7 +11,13 @@ import {
 } from 'lucide-react';
 
 import {
-  aulasSemanais,
+  Toast,
+  inferirTipoMensagem,
+  limparMensagemBackend,
+  type ToastData,
+} from '../components/Toast';
+
+import {
   modalidades,
   professores,
   salas,
@@ -147,34 +152,6 @@ function getString(item: Record<string, unknown>, keys: string[], fallback = '')
   return fallback;
 }
 
-function getNumber(item: Record<string, unknown>, keys: string[], fallback = 0) {
-  for (const key of keys) {
-    const value = item[key];
-
-    if (typeof value === 'number') {
-      return value;
-    }
-
-    if (typeof value === 'string') {
-      const parsed = Number(value);
-
-      if (!Number.isNaN(parsed)) {
-        return parsed;
-      }
-    }
-  }
-
-  return fallback;
-}
-
-function normalizarEstado(value: string): EstadoAula {
-  if (value === 'RASCUNHO' || value === 'CANCELADA') {
-    return value;
-  }
-
-  return 'ATIVA';
-}
-
 function normalizarProfessores(): Professor[] {
   return professores.map((professor, index) => {
     const item = professor as Record<string, unknown>;
@@ -193,45 +170,6 @@ function normalizarSalas(): Sala[] {
     return {
       id: getString(item, ['id'], `sala-${index}`),
       nome: getString(item, ['nome'], `Sala ${index + 1}`),
-    };
-  });
-}
-
-function criarAulasIniciais(
-  professoresLista: Professor[],
-  salasLista: Sala[]
-): Aula[] {
-  return aulasSemanais.map((aula, index) => {
-    const item = aula as Record<string, unknown>;
-
-    const professorNome = getString(
-      item,
-      ['professorNome'],
-      professoresLista[0]?.nome ?? 'Professor'
-    );
-
-    const professor = professoresLista.find((prof) => prof.nome === professorNome);
-
-    return {
-      id: getString(item, ['id'], `aula-${index}`),
-      turmaId: getString(item, ['turmaId'], ''),
-      salaId: getString(item, ['salaId'], ''),
-      diaSemana: getString(item, ['diaSemana'], 'Segunda-feira') as DiaSemana,
-      horaInicio: getString(item, ['horaInicio'], '18:00'),
-      horaFim: getString(item, ['horaFim'], '19:00'),
-      modalidade: getString(item, ['modalidade'], modalidades[0] ?? 'Ballet'),
-      turma: getString(item, ['turma'], `Turma ${index + 1}`),
-      professorId: getString(
-        item,
-        ['professorId'],
-        professor?.id ?? professoresLista[0]?.id ?? ''
-      ),
-      professorNome,
-      salaNome: getString(item, ['salaNome'], salasLista[0]?.nome ?? 'Estúdio 1'),
-      faixaEtaria: getString(item, ['idade', 'faixaEtaria'], 'Nível aberto'),
-      vagas: getNumber(item, ['vagas'], 18),
-      inscritos: getNumber(item, ['inscritos'], 12),
-      estado: normalizarEstado(getString(item, ['estado'], 'ATIVA')),
     };
   });
 }
@@ -396,15 +334,22 @@ export default function Horario({ currentUser }: { currentUser: CurrentUser }) {
     ...modalidades,
   ]);
 
-  const [aulas, setAulas] = useState<Aula[]>(() =>
-    criarAulasIniciais(normalizarProfessores(), normalizarSalas())
-  );
+  const [aulas, setAulas] = useState<Aula[]>([]);
 
   const [pesquisa, setPesquisa] = useState('');
   const [modalidadeFiltro, setModalidadeFiltro] = useState('TODAS');
   const [carregandoHorario, setCarregandoHorario] = useState(true);
   const [operacaoEmCurso, setOperacaoEmCurso] = useState(false);
-  const [mensagem, setMensagem] = useState('');
+  const [toast, setToast] = useState<ToastData | null>(null);
+
+  function setMensagem(texto: string) {
+    if (!texto) {
+      setToast(null);
+      return;
+    }
+
+    setToast({ mensagem: limparMensagemBackend(texto), tipo: inferirTipoMensagem(texto) });
+  }
 
   const [modalAulaAberta, setModalAulaAberta] = useState(false);
   const [modoEdicao, setModoEdicao] = useState(false);
@@ -457,17 +402,11 @@ export default function Horario({ currentUser }: { currentUser: CurrentUser }) {
           setModalidadesLista(modalidadesBackend);
         }
 
-        if (aulasBackend.length > 0) {
-          setAulas(aulasBackend.map(aulaBackendParaAula));
-        } else {
-          setMensagem('Backend sem aulas semanais registadas. Mantive os exemplos mock para demonstração.');
-        }
+        setAulas(aulasBackend.map(aulaBackendParaAula));
       } catch (error) {
         if (!mounted) return;
 
-        setMensagem(
-          `Não foi possível carregar o horário do backend. Mantive os exemplos mock. ${getErrorMessage(error)}`
-        );
+        setMensagem(`Não foi possível carregar o horário. ${getErrorMessage(error)}`);
       } finally {
         if (mounted) {
           setCarregandoHorario(false);
@@ -630,7 +569,7 @@ export default function Horario({ currentUser }: { currentUser: CurrentUser }) {
 
       const aulaCriada = await criarAulaSemanal(payload);
       setAulas((atuais) => [aulaBackendParaAula(aulaCriada), ...atuais]);
-      setMensagem('Aula criada com sucesso no backend.');
+      setMensagem('Aula criada com sucesso.');
       fecharModalAula();
     } catch (error) {
       setMensagem(`Não foi possível guardar a aula. ${getErrorMessage(error)}`);
@@ -746,17 +685,12 @@ export default function Horario({ currentUser }: { currentUser: CurrentUser }) {
         )}
       </div>
 
-      {mensagem && (
-        <div className="mb-6 rounded-xl border border-[#d4e8df] bg-[#f0f6f3] p-4 flex items-center gap-3">
-          <CheckCircle2 className="w-5 h-5 text-[#2d5f4f]" />
-          <p className="text-[#2d5f4f]">{mensagem}</p>
-        </div>
-      )}
+      <Toast toast={toast} onClose={() => setToast(null)} />
 
       {carregandoHorario && (
         <div className="mb-6 rounded-xl border border-[#d9e8e1] bg-white p-4 flex items-center gap-3">
           <Clock className="w-5 h-5 text-[#2d5f4f]" />
-          <p className="text-[#2d5f4f]">A carregar horário do backend...</p>
+          <p className="text-[#2d5f4f]">A carregar horário...</p>
         </div>
       )}
 
@@ -1009,7 +943,7 @@ export default function Horario({ currentUser }: { currentUser: CurrentUser }) {
         <Modal onClose={fecharModalAula}>
           <ModalHeader
             title={modoEdicao ? 'Editar aula' : 'Nova aula'}
-            subtitle="Os dados ficam guardados no backend."
+            subtitle="Os dados ficam guardados na escola."
             onClose={fecharModalAula}
           />
 
