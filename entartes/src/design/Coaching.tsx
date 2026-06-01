@@ -25,6 +25,7 @@ import {
   aprovarPedidoCoaching,
   associarVagaAPedido as associarVagaPedidoBackend,
   atualizarPedidoCoaching,
+  atualizarVagaCoaching,
   criarPedidoCoaching,
   criarSessaoCoaching,
   criarVagaCoaching,
@@ -501,6 +502,24 @@ function criarVagaForm(currentUser: CurrentUser, estudios: EstudioOption[]): Vag
   };
 }
 
+const repeticaoLabels: Record<RepeticaoVaga, string> = {
+  PONTUAL: 'Pontual',
+  DIARIA: 'Diária',
+  SEMANAL: 'Semanal',
+  MENSAL: 'Mensal',
+};
+
+function dataNoPassado(data: string) {
+  if (!data) return false;
+
+  const hoje = new Date();
+  hoje.setHours(0, 0, 0, 0);
+
+  const alvo = new Date(`${data}T00:00:00`);
+
+  return !Number.isNaN(alvo.getTime()) && alvo.getTime() < hoje.getTime();
+}
+
 function formatarDataPt(data: string) {
   if (!data) return '';
 
@@ -567,6 +586,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
   const [modalVagaAberta, setModalVagaAberta] = useState(false);
   const [modalAssociarAberta, setModalAssociarAberta] = useState(false);
   const [pedidoEditandoId, setPedidoEditandoId] = useState<string | null>(null);
+  const [vagaEditandoId, setVagaEditandoId] = useState<string | null>(null);
 
   const [pedidoForm, setPedidoForm] = useState<PedidoForm>(() => criarPedidoForm(currentUser, []));
   const [vagaForm, setVagaForm] = useState<VagaForm>(criarVagaForm(currentUser, estudios));
@@ -769,9 +789,31 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
   }
 
   function abrirVaga() {
+    setVagaEditandoId(null);
     setVagaForm(criarVagaForm(currentUser, estudios));
     setModalVagaAberta(true);
     setToast(null);
+  }
+
+  function abrirEdicaoVaga(vaga: VagaCoaching) {
+    setVagaEditandoId(vaga.id);
+    setVagaForm({
+      professorId: vaga.professorId,
+      modalidade: vaga.modalidade,
+      repeticao: vaga.repeticao,
+      dataInicio: vaga.dataInicio,
+      dataFim: vaga.dataFim || vaga.dataInicio,
+      horaInicio: vaga.horaInicio,
+      horaFim: vaga.horaFim,
+      estudioId: vaga.estudioId,
+    });
+    setModalVagaAberta(true);
+    setToast(null);
+  }
+
+  function fecharVaga() {
+    setModalVagaAberta(false);
+    setVagaEditandoId(null);
   }
 
   function getAlunoDadosParaPedido() {
@@ -848,6 +890,12 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
 
     const dadosAluno = getAlunoDadosParaPedido();
     const horario = `${formatDate(vaga.dataInicio)}, ${vaga.horaInicio}-${vaga.horaFim}`;
+    const observacoesVaga = [
+      'Pedido criado a partir de uma disponibilidade:',
+      `Sala: ${vaga.salaNome}`,
+      `Repetição: ${repeticaoLabels[vaga.repeticao] ?? 'Pontual'}`,
+      `Horário: ${horario}`,
+    ].join('\n');
 
     try {
       setIsSaving(true);
@@ -860,12 +908,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
         encarregadoId: dadosAluno.encarregadoId || null,
         encarregadoNome: dadosAluno.encarregadoNome,
         tipoCoaching: 'Individual',
-        observacoes: [
-          `Pedido criado a partir da disponibilidade ${vaga.id}.`,
-          `Professor: ${vaga.professorNome}`,
-          `Sala: ${vaga.salaNome}`,
-          `Horário: ${horario}`,
-        ].join('\n'),
+        observacoes: observacoesVaga,
       });
 
       const novoPedido: PedidoCoaching = {
@@ -881,12 +924,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
         tipoCoaching: 'Individual',
         outrosAlunosSugeridos: '',
         preferenciaHorario: horario,
-        observacoes: [
-          `Pedido criado a partir da disponibilidade ${vaga.id}.`,
-          `Professor: ${vaga.professorNome}`,
-          `Sala: ${vaga.salaNome}`,
-          `Horário: ${horario}`,
-        ].join('\n'),
+        observacoes: observacoesVaga,
         vagaId: vaga.id,
       };
 
@@ -907,6 +945,11 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
 
     if (pedidoForm.tipoCoaching === 'Grupo' && !pedidoForm.alunosConvidados.trim()) {
       setMensagem('Indica os alunos convidados para um coaching de grupo.');
+      return;
+    }
+
+    if (pedidoForm.dataPreferida && dataNoPassado(pedidoForm.dataPreferida)) {
+      setMensagem('Não é possível pedir coaching numa data passada.');
       return;
     }
 
@@ -976,8 +1019,24 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
   }
 
   async function criarVaga() {
-    if (!vagaForm.professorId || !vagaForm.horaInicio || !vagaForm.horaFim || !vagaForm.estudioId) {
-      setMensagem('Preenche professor, estúdio e horário da disponibilidade.');
+    if (
+      !vagaForm.professorId ||
+      !vagaForm.dataInicio ||
+      !vagaForm.horaInicio ||
+      !vagaForm.horaFim ||
+      !vagaForm.estudioId
+    ) {
+      setMensagem('Preenche professor, estúdio, data e horário da disponibilidade.');
+      return;
+    }
+
+    if (dataNoPassado(vagaForm.dataInicio)) {
+      setMensagem('Não é possível criar disponibilidades numa data passada.');
+      return;
+    }
+
+    if (vagaForm.horaInicio >= vagaForm.horaFim) {
+      setMensagem('A hora de início tem de ser anterior à hora de fim.');
       return;
     }
 
@@ -986,6 +1045,39 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
 
     try {
       setIsSaving(true);
+
+      if (vagaEditandoId) {
+        const vagaAtualizada = await atualizarVagaCoaching(vagaEditandoId, {
+          professorId: vagaForm.professorId,
+          professorNome,
+          modalidade: vagaForm.modalidade,
+          estudioId: vagaForm.estudioId,
+          salaId: vagaForm.estudioId,
+          data: vagaForm.dataInicio,
+          dataInicio: vagaForm.dataInicio,
+          dataFim: vagaForm.dataInicio,
+          horaInicio: vagaForm.horaInicio,
+          horaFim: vagaForm.horaFim,
+        });
+
+        setVagas((atuais) =>
+          atuais.map((vaga) =>
+            vaga.id === vagaEditandoId
+              ? {
+                  ...vagaBackendParaUi(vagaAtualizada, estudios),
+                  professorNome,
+                  repeticao: vagaForm.repeticao,
+                  salaNome: estudio?.nome ?? vagaAtualizada.salaNome,
+                  dataFim: vagaForm.dataInicio,
+                }
+              : vaga
+          )
+        );
+
+        fecharVaga();
+        setMensagem('Disponibilidade atualizada com sucesso.');
+        return;
+      }
 
       const vagaCriada = await criarVagaCoaching({
         professorId: vagaForm.professorId,
@@ -1003,12 +1095,12 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
         professorNome,
         repeticao: vagaForm.repeticao,
         salaNome: estudio?.nome ?? vagaCriada.salaNome,
-        dataFim: vagaForm.dataFim,
+        dataFim: vagaForm.dataInicio,
       };
 
       setVagas((atuais) => [novaVaga, ...atuais]);
-      setModalVagaAberta(false);
-      setMensagem('Disponibilidade de coaching criada no backend com sucesso.');
+      fecharVaga();
+      setMensagem('Disponibilidade de coaching criada com sucesso.');
     } catch (error) {
       notificar(getErrorMessage(error), 'erro');
     } finally {
@@ -1660,7 +1752,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
 
                 <div className="space-y-2 text-sm text-[#5a7a6c]">
                   <p>
-                    <strong>Repetição:</strong> {vaga.repeticao}
+                    <strong>Repetição:</strong> {repeticaoLabels[vaga.repeticao] ?? vaga.repeticao}
                   </p>
                   <p>
                     <strong>Data:</strong> {formatDate(vaga.dataInicio)}
@@ -1694,6 +1786,15 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
                   >
                     <LinkIcon className="w-4 h-4" />
                     Criar sessão com pedido
+                  </button>
+                )}
+
+                {(isProfessor || isCoordenacao) && vaga.estado === 'ABERTA' && (
+                  <button
+                    onClick={() => abrirEdicaoVaga(vaga)}
+                    className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-white transition-colors"
+                  >
+                    Editar disponibilidade
                   </button>
                 )}
               </article>
@@ -1807,20 +1908,16 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
             </FormField>
 
             <FormField label="Data preferida">
-              <input
+              <SeletorData
                 value={pedidoForm.dataPreferida}
-                onChange={(event) => atualizarPedidoForm('dataPreferida', event.target.value)}
-                type="date"
-                className="inputEntartes"
+                onChange={(valor) => atualizarPedidoForm('dataPreferida', valor)}
               />
             </FormField>
 
             <FormField label="Hora preferida">
-              <input
+              <SeletorHora
                 value={pedidoForm.horaPreferida}
-                onChange={(event) => atualizarPedidoForm('horaPreferida', event.target.value)}
-                type="time"
-                className="inputEntartes"
+                onChange={(valor) => atualizarPedidoForm('horaPreferida', valor)}
               />
             </FormField>
 
@@ -1874,11 +1971,11 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
       )}
 
       {modalVagaAberta && (
-        <Modal onClose={() => setModalVagaAberta(false)}>
+        <Modal onClose={fecharVaga}>
           <ModalHeader
-            title="Nova disponibilidade de coaching"
-            subtitle="Cria uma vaga de coaching no backend."
-            onClose={() => setModalVagaAberta(false)}
+            title={vagaEditandoId ? 'Editar disponibilidade' : 'Nova disponibilidade de coaching'}
+            subtitle="Define o professor, a sala, a data e o horário da disponibilidade."
+            onClose={fecharVaga}
           />
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1927,29 +2024,23 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
             </FormField>
 
             <FormField label="Data">
-              <input
+              <SeletorData
                 value={vagaForm.dataInicio}
-                onChange={(event) => atualizarVagaForm('dataInicio', event.target.value)}
-                type="date"
-                className="inputEntartes"
+                onChange={(valor) => atualizarVagaForm('dataInicio', valor)}
               />
             </FormField>
 
             <FormField label="Hora início">
-              <input
+              <SeletorHora
                 value={vagaForm.horaInicio}
-                onChange={(event) => atualizarVagaForm('horaInicio', event.target.value)}
-                type="time"
-                className="inputEntartes"
+                onChange={(valor) => atualizarVagaForm('horaInicio', valor)}
               />
             </FormField>
 
             <FormField label="Hora fim">
-              <input
+              <SeletorHora
                 value={vagaForm.horaFim}
-                onChange={(event) => atualizarVagaForm('horaFim', event.target.value)}
-                type="time"
-                className="inputEntartes"
+                onChange={(valor) => atualizarVagaForm('horaFim', valor)}
               />
             </FormField>
 
@@ -1970,8 +2061,14 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
 
           <ModalActions
             cancelLabel="Cancelar"
-            confirmLabel={isSaving ? 'A criar...' : 'Criar disponibilidade'}
-            onCancel={() => setModalVagaAberta(false)}
+            confirmLabel={
+              isSaving
+                ? 'A guardar...'
+                : vagaEditandoId
+                  ? 'Guardar alterações'
+                  : 'Criar disponibilidade'
+            }
+            onCancel={fecharVaga}
             onConfirm={() => void criarVaga()}
           />
         </Modal>
@@ -2152,6 +2249,118 @@ function Info({ label, value }: { label: string; value: string }) {
     <div className="rounded-xl bg-[#f8faf9] border border-[#e8f0ed] p-4">
       <p className="text-xs text-[#7a9a8c] mb-1">{label}</p>
       <p className="text-sm text-[#2d5f4f]">{value || '-'}</p>
+    </div>
+  );
+}
+
+const MESES_PT = [
+  'Janeiro',
+  'Fevereiro',
+  'Março',
+  'Abril',
+  'Maio',
+  'Junho',
+  'Julho',
+  'Agosto',
+  'Setembro',
+  'Outubro',
+  'Novembro',
+  'Dezembro',
+];
+
+function SeletorData({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (valor: string) => void;
+}) {
+  const [ano = '', mes = '', dia = ''] = value ? value.split('-') : [];
+  const anoAtual = new Date().getFullYear();
+  const anos = [anoAtual, anoAtual + 1, anoAtual + 2];
+  const totalDias = ano && mes ? new Date(Number(ano), Number(mes), 0).getDate() : 31;
+  const dias = Array.from({ length: totalDias }, (_, indice) =>
+    String(indice + 1).padStart(2, '0')
+  );
+
+  function compor(novoDia: string, novoMes: string, novoAno: string) {
+    if (novoDia && novoMes && novoAno) {
+      onChange(`${novoAno}-${novoMes}-${novoDia}`);
+    } else {
+      onChange('');
+    }
+  }
+
+  return (
+    <div className="grid grid-cols-3 gap-2">
+      <select value={dia} onChange={(event) => compor(event.target.value, mes, ano)} className="inputEntartes">
+        <option value="">Dia</option>
+        {dias.map((item) => (
+          <option value={item} key={item}>
+            {item}
+          </option>
+        ))}
+      </select>
+
+      <select value={mes} onChange={(event) => compor(dia, event.target.value, ano)} className="inputEntartes">
+        <option value="">Mês</option>
+        {MESES_PT.map((nome, indice) => (
+          <option value={String(indice + 1).padStart(2, '0')} key={nome}>
+            {nome}
+          </option>
+        ))}
+      </select>
+
+      <select value={ano} onChange={(event) => compor(dia, mes, event.target.value)} className="inputEntartes">
+        <option value="">Ano</option>
+        {anos.map((item) => (
+          <option value={String(item)} key={item}>
+            {item}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function SeletorHora({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (valor: string) => void;
+}) {
+  const [hora = '', minuto = ''] = value ? value.split(':') : [];
+  const horas = Array.from({ length: 24 }, (_, indice) => String(indice).padStart(2, '0'));
+  const minutos = Array.from({ length: 60 }, (_, indice) => String(indice).padStart(2, '0'));
+
+  function compor(novaHora: string, novoMinuto: string) {
+    if (novaHora && novoMinuto) {
+      onChange(`${novaHora}:${novoMinuto}`);
+    } else {
+      onChange('');
+    }
+  }
+
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      <select value={hora} onChange={(event) => compor(event.target.value, minuto)} className="inputEntartes">
+        <option value="">Hora</option>
+        {horas.map((item) => (
+          <option value={item} key={item}>
+            {item}
+          </option>
+        ))}
+      </select>
+
+      <select value={minuto} onChange={(event) => compor(hora, event.target.value)} className="inputEntartes">
+        <option value="">Min</option>
+        {minutos.map((item) => (
+          <option value={item} key={item}>
+            {item}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }
