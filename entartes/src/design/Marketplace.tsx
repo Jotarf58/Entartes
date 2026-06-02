@@ -363,9 +363,29 @@ function itemAlugado(item: MarketplaceItem) {
   return item.estadoAnuncio === 'RESERVADO';
 }
 
+function alugueresConcluidos(item: MarketplaceItem) {
+  const agora = Date.now();
+
+  return item.requisicoes.filter((requisicao) => {
+    if (requisicao.estado !== 'ACEITE' || !requisicao.dataFim) return false;
+
+    const fim = new Date(requisicao.dataFim);
+
+    return !Number.isNaN(fim.getTime()) && fim.getTime() < agora;
+  });
+}
+
+function itemConcluido(item: MarketplaceItem) {
+  return !itemAlugado(item) && alugueresConcluidos(item).length > 0;
+}
+
 function getEstadoDisponibilidade(item: MarketplaceItem) {
   if (itemAlugado(item) && item.alugadoAte) {
     return `Alugado até ${formatDate(item.alugadoAte)}`;
+  }
+
+  if (itemConcluido(item)) {
+    return 'Devolvido / concluído';
   }
 
   if (item.estadoAnuncio === 'ATIVO' || item.estadoAnuncio === 'PUBLICADO') {
@@ -1115,7 +1135,9 @@ export default function Marketplace({ currentUser }: { currentUser: CurrentUser 
                       className={`px-3 py-1 rounded-full text-xs ${
                         itemAlugado(item)
                           ? 'bg-[#fff4d4] text-[#8a6d1d]'
-                          : 'bg-[#d4e8df] text-[#2d5f4f]'
+                          : itemConcluido(item)
+                            ? 'bg-[#e8e0f0] text-[#5a3c7a]'
+                            : 'bg-[#d4e8df] text-[#2d5f4f]'
                       }`}
                     >
                       {getEstadoDisponibilidade(item)}
