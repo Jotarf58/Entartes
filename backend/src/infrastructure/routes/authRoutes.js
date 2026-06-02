@@ -39,7 +39,7 @@ router.get(
     (req, res) => authController.listarAlunos(req, res)
 );
 
-router.post("/utilizadores", authMiddleware, autorizarTipos("ADMIN"), (req, res) =>
+router.post("/utilizadores", authMiddleware, autorizarTipos("ADMIN", "DIRECAO"), (req, res) =>
     authController.criarUtilizador(req, res)
 );
 
@@ -51,23 +51,23 @@ router.get("/utilizadores/:id", authMiddleware, autorizarTipos("ADMIN", "DIRECAO
     authController.buscarPorId(req, res)
 );
 
-router.patch("/utilizadores/:id", authMiddleware, autorizarTipos("ADMIN"), (req, res) =>
+router.patch("/utilizadores/:id", authMiddleware, autorizarTipos("ADMIN", "DIRECAO"), (req, res) =>
     authController.atualizar(req, res)
 );
 
-router.patch("/utilizadores/:id/estado", authMiddleware, autorizarTipos("ADMIN"), (req, res) =>
+router.patch("/utilizadores/:id/estado", authMiddleware, autorizarTipos("ADMIN", "DIRECAO"), (req, res) =>
     authController.alterarEstado(req, res)
 );
 
-router.patch("/utilizadores/:id/password", authMiddleware, autorizarTipos("ADMIN"), (req, res) =>
+router.patch("/utilizadores/:id/password", authMiddleware, autorizarTipos("ADMIN", "DIRECAO"), (req, res) =>
     authController.alterarPassword(req, res)
 );
 
-router.patch("/utilizadores/:id/pin-encarregado", authMiddleware, autorizarTipos("ADMIN"), (req, res) =>
+router.patch("/utilizadores/:id/pin-encarregado", authMiddleware, autorizarTipos("ADMIN", "DIRECAO"), (req, res) =>
     authController.alterarPinEncarregado(req, res)
 );
 
-router.delete("/utilizadores/:id", authMiddleware, autorizarTipos("ADMIN"), (req, res) =>
+router.delete("/utilizadores/:id", authMiddleware, autorizarTipos("ADMIN", "DIRECAO"), (req, res) =>
     authController.remover(req, res)
 );
 

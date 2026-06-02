@@ -56,6 +56,16 @@ import {
   type ModalidadeRegisto,
 } from '../services/horarioService';
 import {
+  atualizarEstadoUtilizador,
+  criarUtilizador,
+  listarUtilizadores,
+  redefinirPasswordUtilizador,
+  redefinirPinEncarregado,
+  removerUtilizador,
+  type TipoPerfil,
+  type UtilizadorApp,
+} from '../services/utilizadoresService';
+import {
   criarRegistoFinanceiro,
   exportarFinanceiroCsv,
   listarFinanceiro,
@@ -189,7 +199,8 @@ type AbaCoordenacao =
   | 'financeiro'
   | 'salas'
   | 'inventario'
-  | 'calendario';
+  | 'calendario'
+  | 'utilizadores';
 
 const ABAS_COORDENACAO: { id: AbaCoordenacao; label: string }[] = [
   { id: 'pedidos', label: 'Pedidos e vagas' },
@@ -197,7 +208,28 @@ const ABAS_COORDENACAO: { id: AbaCoordenacao; label: string }[] = [
   { id: 'salas', label: 'Salas e modalidades' },
   { id: 'inventario', label: 'Inventário' },
   { id: 'calendario', label: 'Calendário e interrupções' },
+  { id: 'utilizadores', label: 'Utilizadores' },
 ];
+
+type UtilizadorForm = {
+  nomeConta: string;
+  email: string;
+  password: string;
+  tipoPerfil: TipoPerfil;
+  nomePerfil: string;
+  pinEncarregado: string;
+};
+
+function criarUtilizadorFormVazio(): UtilizadorForm {
+  return {
+    nomeConta: '',
+    email: '',
+    password: '',
+    tipoPerfil: 'ALUNO',
+    nomePerfil: '',
+    pinEncarregado: '',
+  };
+}
 
 type InterrupcaoForm = {
   nome: string;
@@ -588,6 +620,12 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
     criarInventarioFormVazio()
   );
 
+  const [utilizadores, setUtilizadores] = useState<UtilizadorApp[]>([]);
+  const [modalUtilizadorAberta, setModalUtilizadorAberta] = useState(false);
+  const [utilizadorForm, setUtilizadorForm] = useState<UtilizadorForm>(
+    criarUtilizadorFormVazio()
+  );
+
   const [abaAtiva, setAbaAtiva] = useState<AbaCoordenacao>('pedidos');
   const [financeiroInicio, setFinanceiroInicio] = useState('');
   const [financeiroFim, setFinanceiroFim] = useState('');
@@ -666,6 +704,7 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
         interrupcoesResult,
         modalidadesResult,
         inventarioResult,
+        utilizadoresResult,
       ] = await Promise.allSettled([
         listarProfessoresCoaching(),
         listarEstudios(),
@@ -676,6 +715,7 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
         listarInterrupcoes(),
         listarModalidadesRegistos(),
         listarInventario(),
+        listarUtilizadores().catch(() => [] as UtilizadorApp[]),
       ]);
 
       let professoresBase: Professor[] = [];
@@ -731,6 +771,10 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
         setInventarioEscola(
           inventarioResult.value.filter((item) => item.origem === 'ESCOLA')
         );
+      }
+
+      if (utilizadoresResult.status === 'fulfilled') {
+        setUtilizadores(utilizadoresResult.value);
       }
     } catch (error) {
       setErro(getErrorMessage(error));
@@ -1152,6 +1196,142 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
       await removerItemInventario(itemId);
       setInventarioEscola((atuais) => atuais.filter((item) => item.id !== itemId));
       setMensagem('Item removido do inventário da escola.');
+    } catch (error) {
+      setErro(getErrorMessage(error));
+    }
+  }
+
+  function abrirCriarUtilizador() {
+    setUtilizadorForm(criarUtilizadorFormVazio());
+    setModalUtilizadorAberta(true);
+    setMensagem('');
+    setErro('');
+  }
+
+  function atualizarUtilizadorForm<K extends keyof UtilizadorForm>(
+    campo: K,
+    valor: UtilizadorForm[K]
+  ) {
+    setUtilizadorForm((atual) => ({ ...atual, [campo]: valor }));
+  }
+
+  async function guardarUtilizador() {
+    if (!utilizadorForm.nomeConta.trim()) {
+      setMensagem('Indica o nome da conta.');
+      return;
+    }
+
+    if (!utilizadorForm.email.trim() || !utilizadorForm.email.includes('@')) {
+      setMensagem('Indica um email válido.');
+      return;
+    }
+
+    if (utilizadorForm.password.length < 6) {
+      setMensagem('A password deve ter pelo menos 6 caracteres.');
+      return;
+    }
+
+    if (
+      utilizadorForm.tipoPerfil === 'ENCARREGADO' &&
+      utilizadorForm.pinEncarregado.length < 4
+    ) {
+      setMensagem('O PIN de encarregado deve ter pelo menos 4 dígitos.');
+      return;
+    }
+
+    try {
+      setErro('');
+
+      const novo = await criarUtilizador({
+        nomeConta: utilizadorForm.nomeConta,
+        email: utilizadorForm.email,
+        password: utilizadorForm.password,
+        perfis: [
+          {
+            nome: utilizadorForm.nomePerfil || utilizadorForm.nomeConta,
+            tipoPerfil: utilizadorForm.tipoPerfil,
+          },
+        ],
+        ...(utilizadorForm.tipoPerfil === 'ENCARREGADO'
+          ? { pinEncarregado: utilizadorForm.pinEncarregado }
+          : {}),
+      });
+
+      setUtilizadores((atuais) => [novo, ...atuais]);
+      setMensagem('Utilizador criado com sucesso.');
+      setModalUtilizadorAberta(false);
+    } catch (error) {
+      setErro(getErrorMessage(error));
+    }
+  }
+
+  async function alternarEstadoUtilizador(utilizador: UtilizadorApp) {
+    const novoEstado = utilizador.estado === 'ATIVO' ? 'INATIVO' : 'ATIVO';
+
+    try {
+      await atualizarEstadoUtilizador(utilizador.id, novoEstado);
+      setUtilizadores((atuais) =>
+        atuais.map((item) =>
+          item.id === utilizador.id ? { ...item, estado: novoEstado } : item
+        )
+      );
+      setMensagem(`Utilizador ${novoEstado === 'ATIVO' ? 'ativado' : 'desativado'}.`);
+    } catch (error) {
+      setErro(getErrorMessage(error));
+    }
+  }
+
+  async function redefinirPassword(utilizador: UtilizadorApp) {
+    const novaPassword = window.prompt(
+      `Nova password para ${utilizador.nomeConta} (mín. 6 caracteres):`
+    );
+
+    if (!novaPassword) return;
+
+    if (novaPassword.length < 6) {
+      setMensagem('A password deve ter pelo menos 6 caracteres.');
+      return;
+    }
+
+    try {
+      await redefinirPasswordUtilizador(utilizador.id, novaPassword);
+      setMensagem('Password redefinida com sucesso.');
+    } catch (error) {
+      setErro(getErrorMessage(error));
+    }
+  }
+
+  async function redefinirPin(utilizador: UtilizadorApp) {
+    const novoPin = window.prompt(
+      `Novo PIN de encarregado para ${utilizador.nomeConta} (mín. 4 dígitos):`
+    );
+
+    if (!novoPin) return;
+
+    if (novoPin.length < 4) {
+      setMensagem('O PIN deve ter pelo menos 4 dígitos.');
+      return;
+    }
+
+    try {
+      await redefinirPinEncarregado(utilizador.id, novoPin);
+      setMensagem('PIN de encarregado redefinido com sucesso.');
+    } catch (error) {
+      setErro(getErrorMessage(error));
+    }
+  }
+
+  async function apagarUtilizador(utilizador: UtilizadorApp) {
+    const confirmar = window.confirm(
+      `Remover a conta de ${utilizador.nomeConta}? Esta ação não pode ser revertida.`
+    );
+
+    if (!confirmar) return;
+
+    try {
+      await removerUtilizador(utilizador.id);
+      setUtilizadores((atuais) => atuais.filter((item) => item.id !== utilizador.id));
+      setMensagem('Utilizador removido.');
     } catch (error) {
       setErro(getErrorMessage(error));
     }
@@ -2075,7 +2255,190 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
           </div>
         </section>
         )}
+
+        {abaAtiva === 'utilizadores' && (
+        <section className="bg-white rounded-2xl shadow-sm border border-[#e8f0ed] p-6">
+          <div className="flex items-center justify-between gap-4 mb-5">
+            <div className="flex items-center gap-2">
+              <Users className="w-5 h-5 text-[#2d5f4f]" />
+              <h2 className="text-[#2d5f4f]">Gestão de utilizadores</h2>
+            </div>
+
+            <button
+              onClick={abrirCriarUtilizador}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40]"
+            >
+              <Plus className="w-4 h-4" />
+              Novo utilizador
+            </button>
+          </div>
+
+          {utilizadores.length === 0 ? (
+            <p className="text-sm text-[#7a9a8c]">Ainda não existem utilizadores.</p>
+          ) : (
+            <div className="space-y-3">
+              {utilizadores.map((utilizador) => (
+                <article
+                  key={utilizador.id}
+                  className="rounded-xl border border-[#e8f0ed] bg-[#f8faf9] p-4"
+                >
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2 mb-1">
+                        <h3 className="text-[#2d5f4f]">{utilizador.nomeConta}</h3>
+                        <span
+                          className={`text-xs px-2 py-1 rounded-full ${
+                            utilizador.estado === 'ATIVO'
+                              ? 'bg-[#d4e8df] text-[#2d5f4f]'
+                              : 'bg-[#ffe0e0] text-[#9a3a3a]'
+                          }`}
+                        >
+                          {utilizador.estado === 'ATIVO' ? 'Ativo' : 'Inativo'}
+                        </span>
+                      </div>
+
+                      <p className="text-sm text-[#7a9a8c]">{utilizador.email}</p>
+
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {utilizador.perfis.map((perfil) => (
+                          <span
+                            key={perfil.id}
+                            className="text-xs px-2 py-1 rounded-full bg-white border border-[#e8f0ed] text-[#5a7a6c]"
+                          >
+                            {perfil.nome} · {perfil.tipoPerfil}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => void alternarEstadoUtilizador(utilizador)}
+                        className="px-3 py-2 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-white text-sm"
+                      >
+                        {utilizador.estado === 'ATIVO' ? 'Desativar' : 'Ativar'}
+                      </button>
+
+                      <button
+                        onClick={() => void redefinirPassword(utilizador)}
+                        className="px-3 py-2 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-white text-sm"
+                      >
+                        Redefinir password
+                      </button>
+
+                      {utilizador.temEncarregado && (
+                        <button
+                          onClick={() => void redefinirPin(utilizador)}
+                          className="px-3 py-2 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-white text-sm"
+                        >
+                          Redefinir PIN
+                        </button>
+                      )}
+
+                      <button
+                        onClick={() => void apagarUtilizador(utilizador)}
+                        className="px-3 py-2 rounded-xl border border-[#ffd2d2] text-[#9a3a3a] hover:bg-[#fff5f5]"
+                        aria-label={`Remover ${utilizador.nomeConta}`}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+        )}
       </div>
+
+      {modalUtilizadorAberta && (
+        <Modal onClose={() => setModalUtilizadorAberta(false)}>
+          <ModalHeader
+            title="Novo utilizador"
+            subtitle="Cria contas de alunos, encarregados, professores ou coordenação."
+            onClose={() => setModalUtilizadorAberta(false)}
+          />
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <FormField label="Nome da conta">
+              <input
+                value={utilizadorForm.nomeConta}
+                onChange={(event) =>
+                  atualizarUtilizadorForm('nomeConta', event.target.value)
+                }
+                className="inputEntartes"
+              />
+            </FormField>
+
+            <FormField label="Email">
+              <input
+                type="email"
+                value={utilizadorForm.email}
+                onChange={(event) => atualizarUtilizadorForm('email', event.target.value)}
+                className="inputEntartes"
+              />
+            </FormField>
+
+            <FormField label="Password inicial">
+              <input
+                type="password"
+                value={utilizadorForm.password}
+                onChange={(event) =>
+                  atualizarUtilizadorForm('password', event.target.value)
+                }
+                className="inputEntartes"
+              />
+            </FormField>
+
+            <FormField label="Tipo de perfil">
+              <select
+                value={utilizadorForm.tipoPerfil}
+                onChange={(event) =>
+                  atualizarUtilizadorForm('tipoPerfil', event.target.value as TipoPerfil)
+                }
+                className="inputEntartes"
+              >
+                <option value="ALUNO">Aluno</option>
+                <option value="ENCARREGADO">Encarregado</option>
+                <option value="PROFESSOR">Professor</option>
+                <option value="DIRECAO">Coordenação</option>
+              </select>
+            </FormField>
+
+            <FormField label="Nome do perfil">
+              <input
+                value={utilizadorForm.nomePerfil}
+                onChange={(event) =>
+                  atualizarUtilizadorForm('nomePerfil', event.target.value)
+                }
+                className="inputEntartes"
+                placeholder="Nome apresentado no perfil"
+              />
+            </FormField>
+
+            {utilizadorForm.tipoPerfil === 'ENCARREGADO' && (
+              <FormField label="PIN de encarregado">
+                <input
+                  value={utilizadorForm.pinEncarregado}
+                  onChange={(event) =>
+                    atualizarUtilizadorForm('pinEncarregado', event.target.value)
+                  }
+                  className="inputEntartes"
+                  placeholder="Mín. 4 dígitos"
+                />
+              </FormField>
+            )}
+          </div>
+
+          <ModalActions
+            cancelLabel="Cancelar"
+            confirmLabel="Criar utilizador"
+            onCancel={() => setModalUtilizadorAberta(false)}
+            onConfirm={guardarUtilizador}
+          />
+        </Modal>
+      )}
 
       {pedidoForm && (
         <Modal onClose={() => setPedidoForm(null)}>
