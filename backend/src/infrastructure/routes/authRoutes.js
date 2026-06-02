@@ -67,6 +67,10 @@ router.patch("/utilizadores/:id/pin-encarregado", authMiddleware, autorizarTipos
     authController.alterarPinEncarregado(req, res)
 );
 
+router.post("/utilizadores/:id/perfis", authMiddleware, autorizarTipos("ADMIN", "DIRECAO"), (req, res) =>
+    authController.adicionarPerfil(req, res)
+);
+
 router.delete("/utilizadores/:id", authMiddleware, autorizarTipos("ADMIN", "DIRECAO"), (req, res) =>
     authController.remover(req, res)
 );

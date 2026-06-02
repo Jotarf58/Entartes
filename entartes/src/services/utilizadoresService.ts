@@ -97,6 +97,18 @@ export async function redefinirPinEncarregado(id: string, pinEncarregado: string
   });
 }
 
+export async function adicionarPerfilUtilizador(
+  id: string,
+  input: { nome: string; tipoPerfil: TipoPerfil }
+): Promise<UtilizadorApp> {
+  const response = await api.post<{ mensagem: string; utilizador: UtilizadorBackend }>(
+    `/auth/utilizadores/${id}/perfis`,
+    { nome: input.nome, tipoPerfil: input.tipoPerfil }
+  );
+
+  return adaptar(response.utilizador);
+}
+
 export async function removerUtilizador(id: string) {
   return api.delete<{ mensagem: string }>(`/auth/utilizadores/${id}`);
 }

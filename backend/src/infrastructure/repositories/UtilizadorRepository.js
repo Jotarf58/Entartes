@@ -45,6 +45,17 @@ class UtilizadorRepository {
         });
     }
 
+    async adicionarPerfil(id, perfil) {
+        return await UtilizadorModel.findByIdAndUpdate(
+            id,
+            {
+                $push: { perfis: perfil },
+                $addToSet: { tiposUtilizador: perfil.tipoPerfil }
+            },
+            { new: true, runValidators: true }
+        );
+    }
+
     async remover(id) {
         return await UtilizadorModel.findByIdAndDelete(id);
     }

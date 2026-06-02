@@ -56,6 +56,7 @@ import {
   type ModalidadeRegisto,
 } from '../services/horarioService';
 import {
+  adicionarPerfilUtilizador,
   atualizarEstadoUtilizador,
   criarUtilizador,
   listarUtilizadores,
@@ -218,6 +219,7 @@ type UtilizadorForm = {
   tipoPerfil: TipoPerfil;
   nomePerfil: string;
   pinEncarregado: string;
+  alunos: string[];
 };
 
 function criarUtilizadorFormVazio(): UtilizadorForm {
@@ -228,6 +230,7 @@ function criarUtilizadorFormVazio(): UtilizadorForm {
     tipoPerfil: 'ALUNO',
     nomePerfil: '',
     pinEncarregado: '',
+    alunos: [''],
   };
 }
 
@@ -470,6 +473,10 @@ function criarSalaFormVazio(): SalaForm {
     ativa: true,
     modalidadesPermitidas: [],
   };
+}
+
+function limparDescricaoInventario(descricao: string): string {
+  return descricao.replace(/\[ENTARTES_META[\s\S]*?\]/g, '').trim();
 }
 
 function criarInventarioFormVazio(): InventarioForm {
@@ -1215,6 +1222,24 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
     setUtilizadorForm((atual) => ({ ...atual, [campo]: valor }));
   }
 
+  function atualizarAlunoForm(indice: number, valor: string) {
+    setUtilizadorForm((atual) => ({
+      ...atual,
+      alunos: atual.alunos.map((aluno, i) => (i === indice ? valor : aluno)),
+    }));
+  }
+
+  function adicionarLinhaAluno() {
+    setUtilizadorForm((atual) => ({ ...atual, alunos: [...atual.alunos, ''] }));
+  }
+
+  function removerLinhaAluno(indice: number) {
+    setUtilizadorForm((atual) => ({
+      ...atual,
+      alunos: atual.alunos.filter((_, i) => i !== indice),
+    }));
+  }
+
   async function guardarUtilizador() {
     if (!utilizadorForm.nomeConta.trim()) {
       setMensagem('Indica o nome da conta.');
@@ -1239,6 +1264,20 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
       return;
     }
 
+    const alunosValidos = utilizadorForm.alunos
+      .map((aluno) => aluno.trim())
+      .filter(Boolean);
+
+    const perfis: { nome: string; tipoPerfil: TipoPerfil }[] = [
+      {
+        nome: utilizadorForm.nomePerfil || utilizadorForm.nomeConta,
+        tipoPerfil: utilizadorForm.tipoPerfil,
+      },
+      ...(utilizadorForm.tipoPerfil === 'ENCARREGADO'
+        ? alunosValidos.map((nome) => ({ nome, tipoPerfil: 'ALUNO' as TipoPerfil }))
+        : []),
+    ];
+
     try {
       setErro('');
 
@@ -1246,12 +1285,8 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
         nomeConta: utilizadorForm.nomeConta,
         email: utilizadorForm.email,
         password: utilizadorForm.password,
-        perfis: [
-          {
-            nome: utilizadorForm.nomePerfil || utilizadorForm.nomeConta,
-            tipoPerfil: utilizadorForm.tipoPerfil,
-          },
-        ],
+        tipoConta: perfis.length > 1 ? 'FAMILIAR' : 'INDIVIDUAL',
+        perfis,
         ...(utilizadorForm.tipoPerfil === 'ENCARREGADO'
           ? { pinEncarregado: utilizadorForm.pinEncarregado }
           : {}),
@@ -1260,6 +1295,28 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
       setUtilizadores((atuais) => [novo, ...atuais]);
       setMensagem('Utilizador criado com sucesso.');
       setModalUtilizadorAberta(false);
+    } catch (error) {
+      setErro(getErrorMessage(error));
+    }
+  }
+
+  async function adicionarAlunoConta(utilizador: UtilizadorApp) {
+    const nome = window.prompt(
+      `Nome do novo aluno a associar a ${utilizador.nomeConta}:`
+    );
+
+    if (!nome || !nome.trim()) return;
+
+    try {
+      const atualizado = await adicionarPerfilUtilizador(utilizador.id, {
+        nome: nome.trim(),
+        tipoPerfil: 'ALUNO',
+      });
+
+      setUtilizadores((atuais) =>
+        atuais.map((item) => (item.id === utilizador.id ? atualizado : item))
+      );
+      setMensagem('Aluno adicionado à conta.');
     } catch (error) {
       setErro(getErrorMessage(error));
     }
@@ -1635,22 +1692,6 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             Atualizar dados
-          </button>
-
-          <button
-            onClick={abrirCriarSala}
-            className="flex items-center gap-2 px-5 py-3 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-[#f0f6f3] transition-colors"
-          >
-            <DoorOpen className="w-4 h-4" />
-            Nova sala
-          </button>
-
-          <button
-            onClick={abrirCriarFinanceiro}
-            className="flex items-center gap-2 px-5 py-3 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            Novo registo
           </button>
         </div>
       </div>
@@ -2088,18 +2129,20 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
                   className="rounded-xl border border-[#e8f0ed] bg-[#f8faf9] p-4"
                 >
                   <div className="flex items-start justify-between gap-3 mb-2">
-                    <h3 className="text-[#2d5f4f]">{item.nome}</h3>
+                    <h3 className="text-[#2d5f4f] break-words min-w-0">{item.nome}</h3>
 
                     <button
                       onClick={() => void apagarItemInventario(item.id)}
-                      className="px-2 py-2 rounded-xl border border-[#ffd2d2] text-[#9a3a3a] hover:bg-[#fff5f5]"
+                      className="shrink-0 px-2 py-2 rounded-xl border border-[#ffd2d2] text-[#9a3a3a] hover:bg-[#fff5f5]"
                       aria-label={`Remover ${item.nome}`}
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
 
-                  <p className="text-sm text-[#5a7a6c] mb-1">{item.descricao}</p>
+                  <p className="text-sm text-[#5a7a6c] mb-1 break-words">
+                    {limparDescricaoInventario(item.descricao)}
+                  </p>
                   <p className="text-xs text-[#7a9a8c]">Estado: {item.estadoConservacao}</p>
                 </article>
               ))}
@@ -2312,6 +2355,15 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
                     </div>
 
                     <div className="flex flex-wrap gap-2">
+                      {utilizador.temEncarregado && (
+                        <button
+                          onClick={() => void adicionarAlunoConta(utilizador)}
+                          className="px-3 py-2 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-white text-sm"
+                        >
+                          Adicionar aluno
+                        </button>
+                      )}
+
                       <button
                         onClick={() => void alternarEstadoUtilizador(utilizador)}
                         className="px-3 py-2 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-white text-sm"
@@ -2430,6 +2482,44 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
               </FormField>
             )}
           </div>
+
+          {utilizadorForm.tipoPerfil === 'ENCARREGADO' && (
+            <div className="mt-4 rounded-xl border border-[#e8f0ed] bg-[#f8faf9] p-4">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <p className="text-sm text-[#2d5f4f]">Alunos da conta</p>
+                <button
+                  onClick={adicionarLinhaAluno}
+                  className="flex items-center gap-1 text-sm text-[#2d5f4f] hover:underline"
+                >
+                  <Plus className="w-4 h-4" />
+                  Adicionar aluno
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                {utilizadorForm.alunos.map((aluno, indice) => (
+                  <div key={indice} className="flex items-center gap-2">
+                    <input
+                      value={aluno}
+                      onChange={(event) => atualizarAlunoForm(indice, event.target.value)}
+                      className="inputEntartes flex-1"
+                      placeholder={`Nome do aluno ${indice + 1}`}
+                    />
+
+                    {utilizadorForm.alunos.length > 1 && (
+                      <button
+                        onClick={() => removerLinhaAluno(indice)}
+                        className="px-2 py-2 rounded-xl border border-[#ffd2d2] text-[#9a3a3a] hover:bg-[#fff5f5]"
+                        aria-label="Remover aluno"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <ModalActions
             cancelLabel="Cancelar"

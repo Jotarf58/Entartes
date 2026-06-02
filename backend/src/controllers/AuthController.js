@@ -205,6 +205,37 @@ class AuthController {
             res.status(400).json({ erro: erro.message });
         }
     }
+
+    async adicionarPerfil(req, res) {
+        try {
+            const nome = String(req.body.nome || "").trim();
+            const tipoPerfil = req.body.tipoPerfil || "ALUNO";
+
+            if (!nome) {
+                return res.status(400).json({ erro: "O nome do perfil é obrigatório." });
+            }
+
+            const tiposPermitidos = ["ALUNO", "ENCARREGADO", "PROFESSOR", "DIRECAO", "ADMIN"];
+
+            if (!tiposPermitidos.includes(tipoPerfil)) {
+                return res.status(400).json({ erro: "Tipo de perfil inválido." });
+            }
+
+            const utilizador = await this.utilizadorRepository.adicionarPerfil(req.params.id, {
+                nome,
+                tipoPerfil,
+                descricao: req.body.descricao || "",
+                observacoes: req.body.observacoes || "",
+                ativo: true
+            });
+
+            if (!utilizador) return res.status(404).json({ erro: "Utilizador não encontrado." });
+
+            res.status(201).json({ mensagem: "Perfil adicionado com sucesso.", utilizador });
+        } catch (erro) {
+            res.status(400).json({ erro: erro.message });
+        }
+    }
 }
 
 module.exports = AuthController;
