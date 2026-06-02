@@ -569,6 +569,26 @@ function parsePreferenciaHorario(texto: string) {
   return { dataPreferida, horaPreferida };
 }
 
+function coachingFoiRealizado(pedido: PedidoCoaching) {
+  const estadosAgendados = ['ACEITE_PROFESSOR', 'AGUARDA_ALUNO', 'AGENDADO', 'APROVADO'];
+
+  if (!estadosAgendados.includes(pedido.estado)) return false;
+
+  const { dataPreferida, horaPreferida } = parsePreferenciaHorario(
+    pedido.preferenciaHorario || ''
+  );
+
+  if (!dataPreferida || !horaPreferida) return false;
+
+  const inicio = new Date(`${dataPreferida}T${horaPreferida}:00`);
+
+  if (Number.isNaN(inicio.getTime())) return false;
+
+  const fim = inicio.getTime() + (pedido.duracaoMinutos || 60) * 60 * 1000;
+
+  return fim < Date.now();
+}
+
 function formatarHorarioPreferido(data: string, hora: string) {
   if (!data && !hora) return '';
 
@@ -2066,6 +2086,12 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
                     <span className={`px-3 py-1 rounded-full text-xs ${estadoStyles[pedido.estado]}`}>
                       {estadoLabels[pedido.estado]}
                     </span>
+
+                    {coachingFoiRealizado(pedido) && (
+                      <span className="px-3 py-1 rounded-full bg-[#e8e0f0] text-[#5a3c7a] text-xs">
+                        Realizado
+                      </span>
+                    )}
 
                     <span className="px-3 py-1 rounded-full bg-[#d4e8df] text-[#2d5f4f] text-xs">
                       {pedido.tipoCoaching}
