@@ -304,7 +304,12 @@ const diasSemanaPorIndice: Record<number, DiaSemana> = {
   6: 'Sábado',
 };
 
-const ESTADOS_COACHING_HORARIO = ['ACEITE_PROFESSOR', 'AGUARDA_ALUNO', 'APROVADO'];
+const ESTADOS_COACHING_HORARIO = [
+  'ACEITE_PROFESSOR',
+  'AGUARDA_ALUNO',
+  'APROVADO',
+  'AGENDADO',
+];
 
 function parseDataHoraCoaching(texto: string) {
   let dataISO = '';

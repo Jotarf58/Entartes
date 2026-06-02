@@ -47,7 +47,6 @@ import {
 } from '../services/coachingService';
 
 import {
-  criarAulaSemanal,
   listarAulasSemanais,
   type AulaSemanalApp,
 } from '../services/horarioService';
@@ -1667,31 +1666,7 @@ export default function Coaching({ currentUser }: { currentUser: CurrentUser }) 
         setMensagem('');
       }
 
-      let mensagemHorario = '';
-
-      try {
-        const aulaCoaching = await criarAulaSemanal({
-          diaSemana,
-          horaInicio: vagaSelecionada.horaInicio,
-          horaFim: vagaSelecionada.horaFim,
-          modalidade: vagaSelecionada.modalidade,
-          turma: turmaCoaching,
-          professorId: vagaSelecionada.professorId,
-          professorNome: vagaSelecionada.professorNome,
-          salaId: vagaSelecionada.estudioId || null,
-          salaNome: vagaSelecionada.salaNome,
-          faixaEtaria: pedidoSelecionado.tipoAluno === 'ADULTO' ? 'Adultos' : 'Crianças/Jovens',
-          tipo: 'Coaching',
-          vagas: pedidoSelecionado.tipoCoaching === 'Grupo' ? 6 : 1,
-          inscritos: inscritosCoaching,
-          estado: 'ATIVA',
-        });
-
-        setAulasHorario((atuais) => [aulaCoaching, ...atuais]);
-        mensagemHorario = ' A sessão foi adicionada ao horário semanal.';
-      } catch {
-        mensagemHorario = ' (não foi possível adicionar automaticamente ao horário)';
-      }
+      const mensagemHorario = ' A sessão aparece no horário na data agendada.';
 
       setVagas((atuais) =>
         atuais.map((vaga) =>
