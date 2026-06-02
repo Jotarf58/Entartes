@@ -179,6 +179,21 @@ type InventarioForm = {
   estadoConservacao: string;
 };
 
+type AbaCoordenacao =
+  | 'pedidos'
+  | 'financeiro'
+  | 'salas'
+  | 'inventario'
+  | 'calendario';
+
+const ABAS_COORDENACAO: { id: AbaCoordenacao; label: string }[] = [
+  { id: 'pedidos', label: 'Pedidos e vagas' },
+  { id: 'financeiro', label: 'Financeiro' },
+  { id: 'salas', label: 'Salas e modalidades' },
+  { id: 'inventario', label: 'Inventário' },
+  { id: 'calendario', label: 'Calendário e interrupções' },
+];
+
 type InterrupcaoForm = {
   nome: string;
   data: string;
@@ -567,6 +582,8 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
   const [inventarioForm, setInventarioForm] = useState<InventarioForm>(
     criarInventarioFormVazio()
   );
+
+  const [abaAtiva, setAbaAtiva] = useState<AbaCoordenacao>('pedidos');
 
   const [pedidos, setPedidos] = useState<PedidoCoaching[]>([]);
 
@@ -1430,7 +1447,24 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
         />
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[1.1fr_0.9fr] gap-8 mb-10">
+      <div className="flex flex-wrap gap-2 mb-8">
+        {ABAS_COORDENACAO.map((aba) => (
+          <button
+            key={aba.id}
+            onClick={() => setAbaAtiva(aba.id)}
+            className={`px-4 py-2 rounded-xl text-sm transition-colors ${
+              abaAtiva === aba.id
+                ? 'bg-[#2d5f4f] text-white'
+                : 'bg-white border border-[#d9e8e1] text-[#2d5f4f] hover:bg-[#f0f6f3]'
+            }`}
+          >
+            {aba.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="space-y-8 mb-10">
+        {abaAtiva === 'pedidos' && (
         <section className="bg-white rounded-2xl shadow-sm border border-[#e8f0ed] p-6">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-5">
             <div className="flex items-center gap-2">
@@ -1503,7 +1537,9 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
             )}
           </div>
         </section>
+        )}
 
+        {abaAtiva === 'financeiro' && (
         <section className="bg-white rounded-2xl shadow-sm border border-[#e8f0ed] p-6">
           <div className="flex items-center justify-between gap-4 mb-5">
             <div className="flex items-center gap-2">
@@ -1594,9 +1630,9 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
             )}
           </div>
         </section>
-      </div>
+        )}
 
-      <div className="space-y-8 mb-10">
+        {abaAtiva === 'salas' && (
         <section className="bg-white rounded-2xl shadow-sm border border-[#e8f0ed] p-6">
           <div className="flex items-center gap-2 mb-5">
             <Filter className="w-5 h-5 text-[#2d5f4f]" />
@@ -1648,7 +1684,9 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
             </div>
           )}
         </section>
+        )}
 
+        {abaAtiva === 'salas' && (
         <section className="bg-white rounded-2xl shadow-sm border border-[#e8f0ed] p-6">
           <div className="flex items-center justify-between gap-4 mb-5">
             <div className="flex items-center gap-2">
@@ -1719,7 +1757,9 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
             })}
           </div>
         </section>
+        )}
 
+        {abaAtiva === 'inventario' && (
         <section className="bg-white rounded-2xl shadow-sm border border-[#e8f0ed] p-6">
           <div className="flex items-center justify-between gap-4 mb-5">
             <div className="flex items-center gap-2">
@@ -1768,7 +1808,9 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
             </div>
           )}
         </section>
+        )}
 
+        {abaAtiva === 'calendario' && (
         <section className="bg-white rounded-2xl shadow-sm border border-[#e8f0ed] p-6">
           <div className="flex items-center justify-between gap-4 mb-5">
             <div className="flex items-center gap-2">
@@ -1827,9 +1869,9 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
             ))}
           </div>
         </section>
-      </div>
+        )}
 
-      <div className="space-y-8 mb-10">
+        {abaAtiva === 'pedidos' && (
         <section className="bg-white rounded-2xl shadow-sm border border-[#e8f0ed] p-6">
           <div className="flex items-center gap-2 mb-5">
             <Calendar className="w-5 h-5 text-[#2d5f4f]" />
@@ -1879,7 +1921,9 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
             ))}
           </div>
         </section>
+        )}
 
+        {abaAtiva === 'calendario' && (
         <section className="bg-white rounded-2xl shadow-sm border border-[#e8f0ed] p-6">
           <div className="flex items-center gap-2 mb-5">
             <CalendarDays className="w-5 h-5 text-[#2d5f4f]" />
@@ -1912,6 +1956,7 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
             ))}
           </div>
         </section>
+        )}
       </div>
 
       {pedidoForm && (

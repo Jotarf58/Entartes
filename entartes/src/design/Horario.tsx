@@ -37,6 +37,7 @@ import {
   listarPedidosCoaching,
   type PedidoCoachingApp,
 } from '../services/coachingService';
+import { horaParaMinutos, intervaloHorasValido } from '../utils/validacao';
 
 type UserRole = 'ALUNO' | 'ENCARREGADO' | 'PROFESSOR' | 'COORDENACAO';
 
@@ -67,6 +68,7 @@ type Aula = {
   id: string;
   turmaId?: string;
   salaId?: string;
+  dataISO?: string;
   diaSemana: DiaSemana;
   horaInicio: string;
   horaFim: string;
@@ -349,6 +351,7 @@ function coachingParaAula(pedido: PedidoCoachingApp): Aula | null {
 
   return {
     id: `coaching-${pedido.id}`,
+    dataISO,
     diaSemana,
     horaInicio: hora,
     horaFim,
@@ -577,9 +580,59 @@ export default function Horario({ currentUser }: { currentUser: CurrentUser }) {
     setAulaEditandoId(null);
   }
 
+  function encontrarConflitoAula(): string | null {
+    const inicioNovo = horaParaMinutos(aulaForm.horaInicio);
+    const fimNovo = horaParaMinutos(aulaForm.horaFim);
+
+    if (inicioNovo === null || fimNovo === null) return null;
+
+    const conflito = aulas.find((aula) => {
+      if (modoEdicao && aula.id === aulaEditandoId) return false;
+      if (aula.diaSemana !== aulaForm.diaSemana) return false;
+
+      const inicio = horaParaMinutos(aula.horaInicio);
+      const fim = horaParaMinutos(aula.horaFim);
+
+      if (inicio === null || fim === null) return false;
+
+      const sobrepoe = inicioNovo < fim && inicio < fimNovo;
+
+      if (!sobrepoe) return false;
+
+      const mesmaSala = Boolean(aula.salaNome) && aula.salaNome === aulaForm.salaNome;
+      const mesmoProfessor =
+        Boolean(aula.professorId) && aula.professorId === aulaForm.professorId;
+
+      return mesmaSala || mesmoProfessor;
+    });
+
+    if (!conflito) return null;
+
+    if (conflito.salaNome === aulaForm.salaNome) {
+      return `Conflito: a sala ${conflito.salaNome} já está ocupada (${conflito.turma}) ${conflito.diaSemana} ${conflito.horaInicio}-${conflito.horaFim}.`;
+    }
+
+    return `Conflito: o professor já tem ${conflito.turma} ${conflito.diaSemana} ${conflito.horaInicio}-${conflito.horaFim}.`;
+  }
+
   async function guardarAula() {
     if (!aulaForm.turma.trim()) {
       setMensagem('Preenche o nome da turma/aula.');
+      return;
+    }
+
+    if (!aulaForm.professorId) {
+      setMensagem('Seleciona o professor da aula.');
+      return;
+    }
+
+    if (!aulaForm.salaNome) {
+      setMensagem('Seleciona a sala da aula.');
+      return;
+    }
+
+    if (!intervaloHorasValido(aulaForm.horaInicio, aulaForm.horaFim)) {
+      setMensagem('A hora de fim tem de ser posterior à hora de início.');
       return;
     }
 
@@ -588,6 +641,18 @@ export default function Horario({ currentUser }: { currentUser: CurrentUser }) {
 
     if (Number.isNaN(vagas) || vagas < 0 || Number.isNaN(inscritos) || inscritos < 0) {
       setMensagem('Vagas e inscritos têm de ser números válidos.');
+      return;
+    }
+
+    if (inscritos > vagas) {
+      setMensagem('O número de inscritos não pode ser superior às vagas.');
+      return;
+    }
+
+    const conflito = encontrarConflitoAula();
+
+    if (conflito) {
+      setMensagem(conflito);
       return;
     }
 
@@ -914,10 +979,23 @@ export default function Horario({ currentUser }: { currentUser: CurrentUser }) {
                 </div>
 
                 {diasSemana.map((dia, indice) => {
-                  const aulasCelula = aulasFiltradas.filter(
-                    (aula) =>
-                      aula.diaSemana === dia && getHoraBase(aula.horaInicio) === hora
-                  );
+                  const aulasCelula = aulasFiltradas.filter((aula) => {
+                    if (
+                      aula.diaSemana !== dia ||
+                      getHoraBase(aula.horaInicio) !== hora
+                    ) {
+                      return false;
+                    }
+
+                    if (aula.dataISO) {
+                      return mesmoDia(
+                        new Date(`${aula.dataISO}T00:00:00`),
+                        datasSemana[indice]
+                      );
+                    }
+
+                    return true;
+                  });
 
                   const ehColunaHoje = mesmoDia(datasSemana[indice], hojeData);
 
