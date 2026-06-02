@@ -77,6 +77,11 @@ import {
   limparMensagemBackend,
   type ToastData,
 } from '../components/Toast';
+import {
+  dataValida,
+  intervaloDatasValido,
+  intervaloHorasValido,
+} from '../utils/validacao';
 
 type EstadoPedidoCoaching = EstadoPedidoCoachingBackend;
 type EstadoVaga = EstadoVagaBackend;
@@ -584,6 +589,8 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
   );
 
   const [abaAtiva, setAbaAtiva] = useState<AbaCoordenacao>('pedidos');
+  const [financeiroInicio, setFinanceiroInicio] = useState('');
+  const [financeiroFim, setFinanceiroFim] = useState('');
 
   const [pedidos, setPedidos] = useState<PedidoCoaching[]>([]);
 
@@ -750,6 +757,32 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
   const totalHorasCoaching = vagas
     .filter((vaga) => vaga.estado !== 'FECHADA')
     .reduce((total, vaga) => total + calcularHoras(vaga.horaInicio, vaga.horaFim), 0);
+
+  const registosFinanceirosFiltrados = useMemo(() => {
+    return registosFinanceiros.filter((registo) => {
+      const data = registo.data?.slice(0, 10) ?? '';
+
+      if (financeiroInicio && data < financeiroInicio) return false;
+      if (financeiroFim && data > financeiroFim) return false;
+
+      return true;
+    });
+  }, [registosFinanceiros, financeiroInicio, financeiroFim]);
+
+  const totalFinanceiroFiltrado = useMemo(
+    () => registosFinanceirosFiltrados.reduce((total, registo) => total + registo.valor, 0),
+    [registosFinanceirosFiltrados]
+  );
+
+  const resumoFinanceiroPorOrigem = useMemo(() => {
+    const mapa = new Map<string, number>();
+
+    registosFinanceirosFiltrados.forEach((registo) => {
+      mapa.set(registo.origem, (mapa.get(registo.origem) ?? 0) + registo.valor);
+    });
+
+    return Array.from(mapa.entries()).sort((a, b) => b[1] - a[1]);
+  }, [registosFinanceirosFiltrados]);
 
   const coachingsFaturaveis = useMemo(() => {
     const jaFaturados = new Set(
@@ -1146,6 +1179,14 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
       return;
     }
 
+    if (
+      interrupcaoForm.dataFim &&
+      !intervaloDatasValido(interrupcaoForm.data, interrupcaoForm.dataFim)
+    ) {
+      setMensagem('A data de fim tem de ser igual ou posterior à data de início.');
+      return;
+    }
+
     try {
       setErro('');
 
@@ -1225,6 +1266,20 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
 
   async function guardarVaga() {
     if (!vagaEditandoId || !vagaForm) {
+      return;
+    }
+
+    if (!intervaloHorasValido(vagaForm.horaInicio, vagaForm.horaFim)) {
+      setMensagem('A hora de fim da vaga tem de ser posterior à de início.');
+      return;
+    }
+
+    if (
+      vagaForm.dataInicio &&
+      vagaForm.dataFim &&
+      !intervaloDatasValido(vagaForm.dataInicio, vagaForm.dataFim)
+    ) {
+      setMensagem('A data de fim da vaga tem de ser igual ou posterior à de início.');
       return;
     }
 
@@ -1329,8 +1384,13 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
 
     const valor = Number(financeiroForm.valor);
 
-    if (Number.isNaN(valor) || valor < 0) {
-      setMensagem('O valor tem de ser um número válido.');
+    if (Number.isNaN(valor) || valor <= 0) {
+      setMensagem('O valor tem de ser um número superior a zero.');
+      return;
+    }
+
+    if (!dataValida(financeiroForm.data)) {
+      setMensagem('Indica uma data válida para o registo.');
       return;
     }
 
@@ -1574,6 +1634,64 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
             <InfoBox label="Horas de coaching" value={`${totalHorasCoaching.toFixed(1)}h`} />
           </div>
 
+          <div className="rounded-xl border border-[#e8f0ed] bg-[#f8faf9] p-4 mb-5">
+            <p className="text-sm text-[#2d5f4f] mb-3">Relatório por período</p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+              <FormField label="De">
+                <input
+                  type="date"
+                  value={financeiroInicio}
+                  onChange={(event) => setFinanceiroInicio(event.target.value)}
+                  className="inputEntartes"
+                />
+              </FormField>
+
+              <FormField label="Até">
+                <input
+                  type="date"
+                  value={financeiroFim}
+                  onChange={(event) => setFinanceiroFim(event.target.value)}
+                  className="inputEntartes"
+                />
+              </FormField>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+              <p className="text-sm text-[#5a7a6c]">
+                {registosFinanceirosFiltrados.length} registo(s) no período
+              </p>
+              <p className="text-sm text-[#2d5f4f]">
+                Total: <strong>{totalFinanceiroFiltrado.toFixed(2)}€</strong>
+              </p>
+            </div>
+
+            {(financeiroInicio || financeiroFim) && (
+              <button
+                onClick={() => {
+                  setFinanceiroInicio('');
+                  setFinanceiroFim('');
+                }}
+                className="text-xs text-[#7a9a8c] underline mb-3"
+              >
+                Limpar período
+              </button>
+            )}
+
+            {resumoFinanceiroPorOrigem.length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-2">
+                {resumoFinanceiroPorOrigem.map(([origem, valor]) => (
+                  <span
+                    key={origem}
+                    className="px-3 py-1.5 rounded-full bg-white border border-[#d9e8e1] text-[#2d5f4f] text-xs"
+                  >
+                    {origem}: {valor.toFixed(2)}€
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="rounded-xl bg-[#f0f6f3] border border-[#d9e8e1] p-4 mb-5">
             <p className="text-sm text-[#2d5f4f]">
               Tarifa de coaching: <strong>{VALOR_HORA_COACHING_NORMAL}€/h</strong> · domingos e
@@ -1596,12 +1714,12 @@ export default function Coordenacao({ currentUser }: { currentUser: CoordenacaoU
           </div>
 
           <div className="space-y-3">
-            {registosFinanceiros.length === 0 ? (
+            {registosFinanceirosFiltrados.length === 0 ? (
               <p className="text-sm text-[#7a9a8c]">
-                Ainda não existem registos financeiros.
+                Não existem registos financeiros para o período selecionado.
               </p>
             ) : (
-              registosFinanceiros.slice(0, 5).map((registo) => (
+              registosFinanceirosFiltrados.slice(0, 8).map((registo) => (
                 <article
                   key={registo.id}
                   className="rounded-xl border border-[#e8f0ed] bg-[#f8faf9] p-4"
