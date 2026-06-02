@@ -50,6 +50,7 @@ type CurrentUser = {
   roleLabel: string;
   description: string;
   initials: string;
+  educandos?: { id: string; nome: string }[];
 };
 
 type EstadoAula = EstadoAulaBackend;
@@ -69,6 +70,12 @@ type Aula = {
   turmaId?: string;
   salaId?: string;
   dataISO?: string;
+  ehCoaching?: boolean;
+  coachingAlunoId?: string;
+  coachingAlunoNome?: string;
+  coachingEncarregadoId?: string;
+  coachingEncarregadoNome?: string;
+  coachingConvidadosIds?: string[];
   diaSemana: DiaSemana;
   horaInicio: string;
   horaFim: string;
@@ -243,6 +250,50 @@ function mesmoDia(a: Date, b: Date) {
   );
 }
 
+function coachingRelevanteParaPerfil(aula: Aula, currentUser: CurrentUser): boolean {
+  const ids = [currentUser.perfilId, currentUser.contaId].filter(Boolean) as string[];
+
+  if (currentUser.role === 'COORDENACAO') {
+    return true;
+  }
+
+  if (currentUser.role === 'PROFESSOR') {
+    return aulaPertenceAoProfessor(aula, currentUser);
+  }
+
+  const nome = normalizarTextoComparacao(currentUser.name);
+
+  if (currentUser.role === 'ALUNO') {
+    const ehAluno = Boolean(aula.coachingAlunoId) && ids.includes(aula.coachingAlunoId as string);
+    const ehAlunoNome =
+      Boolean(nome) && normalizarTextoComparacao(aula.coachingAlunoNome ?? '') === nome;
+    const ehConvidado = (aula.coachingConvidadosIds ?? []).some((id) => ids.includes(id));
+
+    return ehAluno || ehAlunoNome || ehConvidado;
+  }
+
+  if (currentUser.role === 'ENCARREGADO') {
+    const ehEncarregado =
+      Boolean(aula.coachingEncarregadoId) && ids.includes(aula.coachingEncarregadoId as string);
+    const ehEncarregadoNome =
+      Boolean(nome) && normalizarTextoComparacao(aula.coachingEncarregadoNome ?? '') === nome;
+
+    const educandoIds = (currentUser.educandos ?? []).map((educando) => educando.id);
+    const educandoNomes = (currentUser.educandos ?? []).map((educando) =>
+      normalizarTextoComparacao(educando.nome)
+    );
+    const ehEducando =
+      Boolean(aula.coachingAlunoId) && educandoIds.includes(aula.coachingAlunoId as string);
+    const ehEducandoNome =
+      Boolean(aula.coachingAlunoNome) &&
+      educandoNomes.includes(normalizarTextoComparacao(aula.coachingAlunoNome as string));
+
+    return ehEncarregado || ehEncarregadoNome || ehEducando || ehEducandoNome;
+  }
+
+  return false;
+}
+
 function aulaPertenceAoProfessor(aula: Aula, currentUser: CurrentUser) {
   const professorAtualId = currentUser.perfilId || currentUser.contaId || '';
   const nomeProfessorAtual = normalizarTextoComparacao(currentUser.name);
@@ -354,9 +405,20 @@ function coachingParaAula(pedido: PedidoCoachingApp): Aula | null {
 
   const horaFim = adicionarMinutosHora(hora, pedido.duracaoMinutos || 60);
 
+  const convidadosAceites = (pedido.convidados ?? [])
+    .filter((convidado) => convidado.estado === 'ACEITE')
+    .map((convidado) => convidado.alunoId)
+    .filter(Boolean);
+
   return {
     id: `coaching-${pedido.id}`,
     dataISO,
+    ehCoaching: true,
+    coachingAlunoId: pedido.alunoId,
+    coachingAlunoNome: pedido.alunoNome || '',
+    coachingEncarregadoId: pedido.encarregadoId || '',
+    coachingEncarregadoNome: pedido.encarregadoNome || '',
+    coachingConvidadosIds: convidadosAceites,
     diaSemana,
     horaInicio: hora,
     horaFim,
@@ -516,11 +578,17 @@ export default function Horario({ currentUser }: { currentUser: CurrentUser }) {
   }, []);
 
   const aulasDoPerfil = useMemo(() => {
-    if (isProfessor) {
-      return aulas.filter((aula) => aulaPertenceAoProfessor(aula, currentUser));
-    }
+    return aulas.filter((aula) => {
+      if (aula.ehCoaching) {
+        return coachingRelevanteParaPerfil(aula, currentUser);
+      }
 
-    return aulas;
+      if (isProfessor) {
+        return aulaPertenceAoProfessor(aula, currentUser);
+      }
+
+      return true;
+    });
   }, [aulas, currentUser, isProfessor]);
 
   const aulasFiltradas = useMemo(() => {
