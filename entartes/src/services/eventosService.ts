@@ -138,6 +138,61 @@ export async function adicionarComunicadoEvento(
   return adaptarEventoBackend(response.evento);
 }
 
+export type ParticipanteEventoBackend = {
+  _id?: string;
+  id?: string;
+  alunoNome?: string;
+  encarregadoNome?: string;
+  estado?: string;
+  observacoes?: string;
+  dataConfirmacao?: string;
+};
+
+export type ParticipanteEventoApp = {
+  id: string;
+  alunoNome: string;
+  encarregadoNome: string;
+  estado: string;
+  observacoes: string;
+  dataConfirmacao: string;
+};
+
+export type ConfirmarPresencaInput = {
+  alunoNome: string;
+  encarregadoNome?: string;
+  observacoes?: string;
+};
+
+export async function confirmarPresencaEvento(
+  eventoId: string,
+  input: ConfirmarPresencaInput
+) {
+  return api.post<{ mensagem: string }>(`/eventos/${eventoId}/autorizacoes`, {
+    alunoNome: input.alunoNome,
+    encarregadoNome: input.encarregadoNome ?? '',
+    observacoes: input.observacoes ?? '',
+    estado: 'AUTORIZADO',
+  });
+}
+
+export async function listarParticipantesEvento(
+  eventoId: string
+): Promise<ParticipanteEventoApp[]> {
+  const response = await api.get<{
+    total: number;
+    autorizacoes: ParticipanteEventoBackend[];
+  }>(`/eventos/${eventoId}/autorizacoes`);
+
+  return response.autorizacoes.map((item) => ({
+    id: item._id ?? item.id ?? crypto.randomUUID(),
+    alunoNome: item.alunoNome ?? '',
+    encarregadoNome: item.encarregadoNome ?? '',
+    estado: item.estado ?? '',
+    observacoes: item.observacoes ?? '',
+    dataConfirmacao: item.dataConfirmacao?.slice(0, 10) ?? '',
+  }));
+}
+
 export async function removerEvento(id: string) {
   const response = await api.delete<EventoMutationResponse>(`/eventos/${id}`);
 

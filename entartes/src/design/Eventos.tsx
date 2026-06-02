@@ -25,8 +25,10 @@ import {
 import {
   adicionarComunicadoEvento,
   atualizarEvento,
+  confirmarPresencaEvento,
   criarEvento,
   listarEventos,
+  listarParticipantesEvento,
   removerEvento,
   type ComunicadoApp,
   type EventoApp,
@@ -307,7 +309,70 @@ export default function Eventos({ currentUser }: { currentUser: CurrentUser }) {
   const [enviandoComunicado, setEnviandoComunicado] = useState(false);
 
   const podePublicarComunicado = isProfessor || isCoordenacao;
+  const podeConfirmarPresenca = isAluno || isEncarregado;
   const eventoThread = eventos.find((evento) => evento.id === eventoThreadId) ?? null;
+
+  const [presencasConfirmadas, setPresencasConfirmadas] = useState<string[]>([]);
+  const [exportandoParticipantes, setExportandoParticipantes] = useState(false);
+
+  async function confirmarPresenca(evento: EventoView) {
+    try {
+      setOperacaoEmCurso(true);
+
+      await confirmarPresencaEvento(evento.id, {
+        alunoNome: currentUser.name,
+        encarregadoNome: isEncarregado ? currentUser.name : '',
+      });
+
+      setPresencasConfirmadas((atuais) => [...atuais, evento.id]);
+      setMensagem('Presença confirmada para este evento.');
+    } catch (error) {
+      setMensagem(getErrorMessage(error));
+    } finally {
+      setOperacaoEmCurso(false);
+    }
+  }
+
+  async function exportarParticipantes(evento: EventoView) {
+    try {
+      setExportandoParticipantes(true);
+
+      const participantes = await listarParticipantesEvento(evento.id);
+
+      if (participantes.length === 0) {
+        setMensagem('Ainda não há participantes confirmados neste evento.');
+        return;
+      }
+
+      const cabecalho = ['Aluno', 'Encarregado', 'Estado', 'Data', 'Observações'];
+      const linhas = participantes.map((participante) =>
+        [
+          participante.alunoNome,
+          participante.encarregadoNome,
+          participante.estado,
+          participante.dataConfirmacao,
+          participante.observacoes,
+        ]
+          .map((campo) => `"${String(campo).replace(/"/g, '""')}"`)
+          .join(',')
+      );
+
+      const csv = [cabecalho.join(','), ...linhas].join('\n');
+      const blob = new Blob([`﻿${csv}`], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `participantes-${evento.titulo.replace(/\s+/g, '-').toLowerCase()}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+
+      setMensagem(`Exportados ${participantes.length} participante(s).`);
+    } catch (error) {
+      setMensagem(getErrorMessage(error));
+    } finally {
+      setExportandoParticipantes(false);
+    }
+  }
 
   useEffect(() => {
     let mounted = true;
@@ -805,8 +870,30 @@ export default function Eventos({ currentUser }: { currentUser: CurrentUser }) {
                       </button>
                     )}
 
+                    {podeConfirmarPresenca && evento.estado !== 'CONCLUIDO' && (
+                      <button
+                        onClick={() => void confirmarPresenca(evento)}
+                        disabled={
+                          operacaoEmCurso || presencasConfirmadas.includes(evento.id)
+                        }
+                        className="px-4 py-2 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] transition-colors disabled:bg-[#d4e8df] disabled:text-[#2d5f4f]"
+                      >
+                        {presencasConfirmadas.includes(evento.id)
+                          ? 'Presença confirmada'
+                          : 'Confirmar presença'}
+                      </button>
+                    )}
+
                     {isCoordenacao && (
                       <>
+                        <button
+                          onClick={() => void exportarParticipantes(evento)}
+                          disabled={exportandoParticipantes}
+                          className="px-4 py-2 rounded-xl border border-[#d9e8e1] text-[#2d5f4f] hover:bg-[#f0f6f3] transition-colors disabled:opacity-60"
+                        >
+                          {exportandoParticipantes ? 'A exportar...' : 'Exportar participantes'}
+                        </button>
+
                         <button
                           onClick={() => abrirEdicaoEvento(evento)}
                           className="px-4 py-2 rounded-xl bg-[#2d5f4f] text-white hover:bg-[#244c40] transition-colors"
